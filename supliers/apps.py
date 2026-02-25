@@ -1,6 +1,6 @@
 from django.apps import AppConfig
 
 
-class FulfilmentConfig(AppConfig):
+class SupliersConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "fulfilment"
+    name = "supliers"

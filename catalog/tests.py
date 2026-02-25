@@ -1,8 +1,9 @@
 from django.test import TestCase
+from rest_framework.test import APIClient
 from rest_framework.test import APIRequestFactory
 
 from account.models import User
-from catalog.models import Category, Product, ProductVariant
+from catalog.models import Category, Product, ProductReview, ProductVariant
 from catalog.serializers import ProductSerializer
 from shop.models import Shop
 
@@ -81,3 +82,74 @@ class ProductSerializerTests(TestCase):
         self.assertEqual(product.category_id, self.category.id)
         self.assertEqual(Product.objects.count(), 1)
         self.assertEqual(ProductVariant.objects.filter(product=product).count(), 2)
+
+
+class ProductReviewAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.owner = User.objects.create_user(
+            email="owner-review@example.com",
+            password="Pass123!",
+            role="SHOP_OWNER",
+            marketer_type="CREATOR",
+        )
+        self.user1 = User.objects.create_user(
+            email="user1-review@example.com",
+            password="Pass123!",
+            role="CUSTOMER",
+            marketer_type="CREATOR",
+        )
+        self.user2 = User.objects.create_user(
+            email="user2-review@example.com",
+            password="Pass123!",
+            role="CUSTOMER",
+            marketer_type="CREATOR",
+        )
+        self.shop = Shop.objects.create(name="Review Shop", owner=self.owner)
+        self.category = Category.objects.create(name="Review Cat")
+        self.product = Product.objects.create(
+            name="Review Product",
+            shop=self.shop,
+            category=self.category,
+            price="49.99",
+        )
+
+    def test_user_can_create_review(self):
+        self.client.force_authenticate(self.user1)
+        response = self.client.post(
+            f"/catalog/products/{self.product.id}/reviews/",
+            {"rating": 5, "title": "Great", "comment": "Loved it"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(ProductReview.objects.count(), 1)
+        self.assertEqual(ProductReview.objects.first().user_id, self.user1.id)
+
+    def test_user_cannot_review_same_product_twice(self):
+        ProductReview.objects.create(product=self.product, user=self.user1, rating=4, title="Nice", comment="Good")
+        self.client.force_authenticate(self.user1)
+        response = self.client.post(
+            f"/catalog/products/{self.product.id}/reviews/",
+            {"rating": 5, "title": "Again", "comment": "Second review"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+
+    def test_only_owner_of_review_can_update(self):
+        review = ProductReview.objects.create(product=self.product, user=self.user1, rating=4, title="Nice", comment="Good")
+        self.client.force_authenticate(self.user2)
+        response = self.client.patch(
+            f"/catalog/reviews/{review.id}/",
+            {"rating": 1, "comment": "Changed"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+
+    def test_product_serializer_returns_review_summary(self):
+        ProductReview.objects.create(product=self.product, user=self.user1, rating=4, title="A", comment="B")
+        ProductReview.objects.create(product=self.product, user=self.user2, rating=5, title="C", comment="D")
+        request = APIRequestFactory().get("/catalog/products/")
+        request.user = self.owner
+        data = ProductSerializer(instance=self.product, context={"request": request}).data
+        self.assertEqual(data["reviews_count"], 2)
+        self.assertEqual(data["average_rating"], 4.5)

@@ -2,12 +2,22 @@ from rest_framework.serializers import ModelSerializer
 from django.contrib.auth import get_user_model
 from .models import *
 from rest_framework import serializers
+from .badge_logic import resolve_badge
 User = get_user_model()
 
-class UserSerializer(ModelSerializer):
+class MerchantIdRepresentationMixin:
+    def to_representation(self, instance):
+        resolve_badge(instance, persist=True)
+        data = super().to_representation(instance)
+        if "merchant_id" in data:
+            data["merchant_id"] = instance.get_decoded_merchant_id()
+        return data
+
+
+class UserSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','first_name', 'last_name', 'email', 'phone_number', 'location', 'created_at', 'updated_at',  'password']
+        fields = ['id','first_name', 'last_name', 'email', 'merchant_id', 'phone_number', 'location', 'badge', 'created_at', 'updated_at',  'password']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
@@ -23,10 +33,10 @@ class UserSerializer(ModelSerializer):
             user.save()
         return user
     
-class ShopOwnerSerializer(ModelSerializer):
+class ShopOwnerSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','first_name', 'last_name', 'email', 'phone_number', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'password']
+        fields = ['id','first_name', 'last_name', 'email', 'merchant_id', 'phone_number', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'password']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
@@ -40,10 +50,10 @@ class ShopOwnerSerializer(ModelSerializer):
             user.save()
         return user
 
-class SupplierSerializer(ModelSerializer):
+class SupplierSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','company_name',  'email', 'phone_number', 'location', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'policy', 'password', 'bank_account', 'bank_account_number']
+        fields = ['id','company_name',  'email', 'merchant_id', 'phone_number', 'location', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'policy', 'password', 'bank_account', 'bank_account_number']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
@@ -56,10 +66,10 @@ class SupplierSerializer(ModelSerializer):
             user.role = role
             user.save()
         return user
-class CourierSerializer(ModelSerializer):
+class CourierSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','company_name', 'email', 'phone_number', 'location', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'is_available', 'password']
+        fields = ['id','company_name', 'email', 'merchant_id', 'phone_number', 'location', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'is_available', 'password']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
@@ -103,7 +113,7 @@ class PaymentMethodSerializer(ModelSerializer):
         return super().create(validated_data)
 
 
-class MarketerSerializer(ModelSerializer):
+class MarketerSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
         fields = [
@@ -113,14 +123,17 @@ class MarketerSerializer(ModelSerializer):
             'company_name',
             'avatar',
             'email',
+            'merchant_id',
             'phone_number',
             'bio',
             'base_price',
+            'marketer_commission',
             'followers_count',
             'instagram',
             'marketer_type',
             'pricing_type',
             'rating',
+            'badge',
             'services',
             'team_size',
             'tiktok',

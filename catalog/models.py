@@ -41,8 +41,19 @@ class Product(models.Model):
     name = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True)
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="products", blank=True, null=True)
+    supplier = models.ForeignKey(
+        "account.User",
+        on_delete=models.SET_NULL,
+        related_name="supplied_products",
+        blank=True,
+        null=True,
+        limit_choices_to={"role": "SUPPLIER"},
+    )
     sku = models.CharField(max_length=100, unique=True, blank=True, null=True)
     price = models.DecimalField(max_digits=12, decimal_places=2)
+    supplier_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    minimum_wholesale_quantity = models.PositiveIntegerField(default=1)
+    shop_owner_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, related_name="products")
     is_active = models.BooleanField(default=True)
     weight = models.FloatField(blank=True, null=True)  # kg
@@ -93,6 +104,27 @@ class ProductVariant(models.Model):
     
     def __str__(self):
         return f"{self.product.name} - {self.variant_name}"
+
+
+class ProductReview(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product = models.ForeignKey(Product, related_name="reviews", on_delete=models.CASCADE)
+    user = models.ForeignKey("account.User", related_name="product_reviews", on_delete=models.CASCADE)
+    rating = models.PositiveSmallIntegerField()
+    title = models.CharField(max_length=120, blank=True)
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("product", "user")
+        indexes = [
+            models.Index(fields=["product", "created_at"]),
+            models.Index(fields=["rating"]),
+        ]
+
+    def __str__(self):
+        return f"{self.product_id} - {self.user_id} - {self.rating}"
 
 
 #example 

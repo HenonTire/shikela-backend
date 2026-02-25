@@ -1,6 +1,7 @@
 
 from pathlib import Path
 from datetime import timedelta
+import os
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -27,7 +28,8 @@ INSTALLED_APPS = [
     'catalog',
     'inventory',
     'order',
-    'fulfilment',
+    'payment',
+    'supliers',
 
 ]
 
@@ -124,3 +126,12 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
 }
+
+# SantimPay (test mode by default for local development)
+SANTIMPAY_TEST_BED = os.getenv("SANTIMPAY_TEST_BED", "true").lower() in {"1", "true", "yes", "on"}
+SANTIMPAY_MERCHANT_ID = os.getenv("SANTIMPAY_MERCHANT_ID", "")
+SANTIMPAY_PRIVATE_KEY = os.getenv("SANTIMPAY_PRIVATE_KEY", "")
+SANTIMPAY_SUCCESS_REDIRECT_URL = os.getenv("SANTIMPAY_SUCCESS_REDIRECT_URL", "http://localhost:8000/payment/success")
+SANTIMPAY_FAILURE_REDIRECT_URL = os.getenv("SANTIMPAY_FAILURE_REDIRECT_URL", "http://localhost:8000/payment/failure")
+SANTIMPAY_CANCEL_REDIRECT_URL = os.getenv("SANTIMPAY_CANCEL_REDIRECT_URL", "http://localhost:8000/payment/cancel")
+SANTIMPAY_NOTIFY_URL = os.getenv("SANTIMPAY_NOTIFY_URL", "http://localhost:8000/payment/webhook/santimpay/")

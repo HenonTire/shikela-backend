@@ -1,4 +1,5 @@
 import uuid
+import base64
 from django.db import models
 from django.contrib.auth.models import (
     AbstractBaseUser,
@@ -29,6 +30,7 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
+    MERCHANT_ID_PREFIX = "enc:"
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     ROLE_CHOICES = [
         ("CUSTOMER", "Customer"),
@@ -41,6 +43,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Basic fields
     email = models.EmailField(unique=True)
+    merchant_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
     first_name = models.CharField(max_length=30, blank=True)
     last_name = models.CharField(max_length=30, blank=True)
     phone_number = models.CharField(max_length=20, blank=True)
@@ -152,6 +155,14 @@ class User(AbstractBaseUser, PermissionsMixin):
         null=True,
         blank=True
     )
+    marketer_commission = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        default=0,
+        help_text="Commission percent for marketer, e.g. 10.00 means 10%",
+    )
 
     # Trust system
     rating = models.FloatField(default=0.0)
@@ -165,6 +176,37 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
+
+    @classmethod
+    def encode_merchant_id(cls, value: str) -> str:
+        raw = (value or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith(cls.MERCHANT_ID_PREFIX):
+            return raw
+        encoded = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+        return f"{cls.MERCHANT_ID_PREFIX}{encoded}"
+
+    @classmethod
+    def decode_merchant_id(cls, value: str) -> str:
+        raw = (value or "").strip()
+        if not raw:
+            return ""
+        if not raw.startswith(cls.MERCHANT_ID_PREFIX):
+            return raw
+        payload = raw[len(cls.MERCHANT_ID_PREFIX):]
+        try:
+            return base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8")
+        except Exception:
+            return ""
+
+    def get_decoded_merchant_id(self) -> str:
+        return self.decode_merchant_id(self.merchant_id or "")
+
+    def save(self, *args, **kwargs):
+        if self.merchant_id:
+            self.merchant_id = self.encode_merchant_id(self.merchant_id)
+        super().save(*args, **kwargs)
 
 
 class PaymentMethod(models.Model):

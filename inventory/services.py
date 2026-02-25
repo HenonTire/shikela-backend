@@ -81,3 +81,21 @@ class StockManager:
             released += take_qty
             if released >= qty:
                 break
+        if released < qty:
+            raise Exception("Not enough reserved stock to release order")
+
+    @staticmethod
+    def confirm_order(variant: ProductVariant, qty: int):
+        # Consume reserved stock after payment confirmation
+        inventories = Inventory.objects.filter(variant=variant).filter(quantity_reserved__gt=0)
+        confirmed = 0
+        for inv in inventories:
+            if inv.quantity_reserved <= 0:
+                continue
+            take_qty = min(qty - confirmed, inv.quantity_reserved)
+            InventoryService.confirm_stock(inv, take_qty, reason="Order Confirmed")
+            confirmed += take_qty
+            if confirmed >= qty:
+                break
+        if confirmed < qty:
+            raise Exception("Not enough reserved stock to confirm order")
