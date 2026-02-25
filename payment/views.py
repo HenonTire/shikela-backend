@@ -2,6 +2,7 @@
 import json
 import logging
 from decimal import Decimal
+from django.conf import settings
 from django.db import transaction
 from django.http import HttpRequest, JsonResponse
 from django.utils.decorators import method_decorator
@@ -21,8 +22,9 @@ from .serializers import (
 from django.shortcuts import get_object_or_404
 
 from inventory.services import StockManager
+from courier.services import create_shipment_for_order, LogisticsError
 from order.models import Order
-from payment.models import Earning, Payment, PayoutRequest, Refund
+from payment.models import Earning, Payment, PayoutRequest, Refund, WebhookLog
 from payment.services.service import (
     PaymentConfigurationError,
     PaymentGatewayError,
@@ -228,8 +230,9 @@ class PayoutRequestView(APIView):
         has_available = Earning.objects.filter(user=request.user, status=Earning.Status.AVAILABLE).exists()
         if not has_available:
             return Response({"detail": "No available earnings to payout"}, status=status.HTTP_400_BAD_REQUEST)
+        merchant_id = request.user.merchant_id or getattr(settings, "PLATFORM_MERCHANT_ID", "")
         try:
-            service = PaymentService(merchant_id=request.user.merchant_id)
+            service = PaymentService(merchant_id=merchant_id)
             payout_request = service.request_total_user_payout(user=request.user)
         except PaymentServiceError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -291,11 +294,21 @@ class SantimPayWebhookView(View):
         return JsonResponse({"info": "SantimPay Webhook endpoint, POST only"})
 
     def post(self, request: HttpRequest):
+        webhook_log = None
+
         # Parse JSON
         try:
             payload = json.loads(request.body)
         except json.JSONDecodeError:
             logger.error("SantimPay webhook invalid JSON: %s", request.body)
+            WebhookLog.objects.create(
+                provider="SANTIMPAY",
+                event_type="INVALID_JSON",
+                reference="INVALID_JSON",
+                payload={"raw_body": request.body.decode("utf-8", errors="replace")},
+                processed=False,
+                processing_attempts=1,
+            )
             return JsonResponse({"error": "Invalid JSON"}, status=400)
 
         logger.info("SantimPay webhook received: %s", payload)
@@ -304,12 +317,30 @@ class SantimPayWebhookView(View):
         tx_id = payload.get("id")
         if not tx_id:
             logger.warning("SantimPay webhook missing transaction ID")
+            WebhookLog.objects.create(
+                provider="SANTIMPAY",
+                event_type="MISSING_TX_ID",
+                reference="MISSING_TX_ID",
+                payload=payload,
+                processed=False,
+                processing_attempts=1,
+            )
             return JsonResponse({"error": "Missing transaction ID"}, status=400)
+
+        webhook_log = WebhookLog.objects.create(
+            provider="SANTIMPAY",
+            event_type="RECEIVED",
+            reference=tx_id,
+            payload=payload,
+            processed=False,
+            processing_attempts=1,
+        )
 
         # Try to sync Payment first
         payment = Payment.objects.filter(provider_reference=tx_id).select_related("order__shop__owner").first()
         if payment:
             try:
+                webhook_log.event_type = "PAYMENT_SYNC"
                 merchant_id = (payment.metadata or {}).get("merchant_id") or _get_order_merchant_id(payment.order)
                 service = PaymentService(merchant_id=merchant_id)
                 with transaction.atomic():
@@ -322,16 +353,28 @@ class SantimPayWebhookView(View):
                     if previous_order_status != Order.Status.PAID and order.status == Order.Status.PAID:
                         _apply_stock_for_paid_order(order)
                         service.record_settlement_earnings(payment)
+                        try:
+                            create_shipment_for_order(order)
+                        except LogisticsError:
+                            logger.exception("Shipment creation failed for order=%s", order.id)
                     elif previous_order_status != Order.Status.CANCELLED and order.status == Order.Status.CANCELLED:
                         _apply_stock_for_cancelled_order(order)
+                webhook_log.processed = True
+                webhook_log.save(update_fields=["event_type", "processed"])
                 logger.info("Payment synced successfully: tx_id=%s", tx_id)
             except PaymentGatewayError as e:
+                webhook_log.event_type = "PAYMENT_SYNC_FAILED"
+                webhook_log.save(update_fields=["event_type"])
                 logger.exception("Gateway error while syncing payment tx_id=%s: %s", tx_id, str(e))
                 return JsonResponse({"error": str(e)}, status=502)
             except PaymentServiceError as e:
+                webhook_log.event_type = "PAYMENT_SYNC_FAILED"
+                webhook_log.save(update_fields=["event_type"])
                 logger.exception("Payment sync failed for tx_id=%s: %s", tx_id, str(e))
                 return JsonResponse({"error": str(e)}, status=400)
             except Exception as e:
+                webhook_log.event_type = "PAYMENT_SYNC_FAILED"
+                webhook_log.save(update_fields=["event_type"])
                 logger.exception("Stock update failed for payment tx_id=%s: %s", tx_id, str(e))
                 return JsonResponse({"error": str(e)}, status=409)
             return JsonResponse({"status": "payment synced"}, status=200)
@@ -340,22 +383,33 @@ class SantimPayWebhookView(View):
         refund = Refund.objects.filter(provider_reference=tx_id).select_related("payment__order__shop__owner").first()
         if refund:
             try:
+                webhook_log.event_type = "REFUND_SYNC"
                 merchant_id = (refund.payment.metadata or {}).get("merchant_id") or _get_order_merchant_id(refund.payment.order)
                 service = PaymentService(merchant_id=merchant_id)
                 with transaction.atomic():
                     service.sync_refund_status(refund)
+                webhook_log.processed = True
+                webhook_log.save(update_fields=["event_type", "processed"])
                 logger.info("Refund synced successfully: tx_id=%s", tx_id)
             except PaymentGatewayError as e:
+                webhook_log.event_type = "REFUND_SYNC_FAILED"
+                webhook_log.save(update_fields=["event_type"])
                 logger.exception("Gateway error while syncing refund tx_id=%s: %s", tx_id, str(e))
                 return JsonResponse({"error": str(e)}, status=502)
             except PaymentServiceError as e:
+                webhook_log.event_type = "REFUND_SYNC_FAILED"
+                webhook_log.save(update_fields=["event_type"])
                 logger.exception("Refund sync failed for tx_id=%s: %s", tx_id, str(e))
                 return JsonResponse({"error": str(e)}, status=400)
             except Exception:
+                webhook_log.event_type = "REFUND_SYNC_FAILED"
+                webhook_log.save(update_fields=["event_type"])
                 logger.exception("Unexpected error syncing refund tx_id=%s", tx_id)
                 return JsonResponse({"error": "Unexpected refund sync error"}, status=500)
             return JsonResponse({"status": "refund synced"}, status=200)
 
         # Transaction not found
+        webhook_log.event_type = "NOT_FOUND"
+        webhook_log.save(update_fields=["event_type"])
         logger.warning("SantimPay webhook transaction not found: tx_id=%s", tx_id)
         return JsonResponse({"error": "Transaction not found"}, status=404)

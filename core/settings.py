@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'inventory',
     'order',
     'payment',
+    'courier',
     'supliers',
 
 ]
@@ -128,10 +129,20 @@ SIMPLE_JWT = {
 }
 
 # SantimPay (test mode by default for local development)
+def _normalize_pem(value: str) -> str:
+    # Support env values stored with literal '\n' characters.
+    return (value or "").replace("\\n", "\n")
+
+
 SANTIMPAY_TEST_BED = os.getenv("SANTIMPAY_TEST_BED", "true").lower() in {"1", "true", "yes", "on"}
 SANTIMPAY_MERCHANT_ID = os.getenv("SANTIMPAY_MERCHANT_ID", "")
-SANTIMPAY_PRIVATE_KEY = os.getenv("SANTIMPAY_PRIVATE_KEY", "")
+SANTIMPAY_PRIVATE_KEY = _normalize_pem(os.getenv("SANTIMPAY_PRIVATE_KEY", ""))
 SANTIMPAY_SUCCESS_REDIRECT_URL = os.getenv("SANTIMPAY_SUCCESS_REDIRECT_URL", "http://localhost:8000/payment/success")
 SANTIMPAY_FAILURE_REDIRECT_URL = os.getenv("SANTIMPAY_FAILURE_REDIRECT_URL", "http://localhost:8000/payment/failure")
 SANTIMPAY_CANCEL_REDIRECT_URL = os.getenv("SANTIMPAY_CANCEL_REDIRECT_URL", "http://localhost:8000/payment/cancel")
 SANTIMPAY_NOTIFY_URL = os.getenv("SANTIMPAY_NOTIFY_URL", "http://localhost:8000/payment/webhook/santimpay/")
+
+# Platform payout resolution
+PLATFORM_USER_ID = os.getenv("PLATFORM_USER_ID", "")
+PLATFORM_USER_EMAIL = os.getenv("PLATFORM_USER_EMAIL", "")
+PLATFORM_MERCHANT_ID = os.getenv("PLATFORM_MERCHANT_ID", "")

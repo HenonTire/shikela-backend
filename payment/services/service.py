@@ -965,12 +965,18 @@ class PaymentService:
 
     def _resolve_platform_user(self) -> Optional[User]:
         platform_user_id = getattr(settings, "PLATFORM_USER_ID", None) or os.getenv("PLATFORM_USER_ID")
+        platform_user = None
         if platform_user_id:
-            return User.objects.filter(id=platform_user_id).first()
+            platform_user = User.objects.filter(id=platform_user_id).first()
         platform_user_email = getattr(settings, "PLATFORM_USER_EMAIL", None) or os.getenv("PLATFORM_USER_EMAIL")
-        if platform_user_email:
-            return User.objects.filter(email=platform_user_email).first()
-        return None
+        if not platform_user and platform_user_email:
+            platform_user = User.objects.filter(email=platform_user_email).first()
+        if platform_user and not getattr(platform_user, "merchant_id", None):
+            configured_merchant = getattr(settings, "PLATFORM_MERCHANT_ID", None) or os.getenv("PLATFORM_MERCHANT_ID")
+            if configured_merchant:
+                platform_user.merchant_id = configured_merchant
+                platform_user.save(update_fields=["merchant_id", "updated_at"])
+        return platform_user
 
     @staticmethod
     def _is_settlement_fully_paid(settlement: Dict[str, Any]) -> bool:

@@ -527,6 +527,45 @@ curl -X POST http://127.0.0.1:8000/payment/refunds/<refund_id>/execute/ \
   -H "Authorization: Bearer <admin_access_token>"
 ```
 
+## Logistics (Courier)
+Base path: `/logistics/`
+
+Shipment records are created automatically after successful payment webhook sync.
+
+**Courier Webhook**
+Endpoint used by courier partner systems to update shipment tracking state.
+
+```bash
+curl -X POST http://127.0.0.1:8000/logistics/webhook/hudhud/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tracking_id": "HD12345",
+    "status": "IN_TRANSIT"
+  }'
+```
+
+Supported status inputs include:
+- `CREATED`
+- `PICKED_UP`
+- `IN_TRANSIT`
+- `OUT_FOR_DELIVERY`
+- `DELIVERED`
+- `FAILED`
+- `CANCELLED`
+
+Order status mapping:
+- `PICKED_UP` -> `confirmed`
+- `IN_TRANSIT` -> `processing`
+- `OUT_FOR_DELIVERY` -> `shipped`
+- `DELIVERED` -> `delivered`
+- `FAILED` / `CANCELLED` -> `cancelled` (if not delivered)
+
+**Shipment Detail**
+```bash
+curl -X GET http://127.0.0.1:8000/logistics/shipments/<shipment_id>/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
 ## Suppliers Portal
 Base path: `/supliers/`
 
@@ -651,7 +690,8 @@ Attach JWT:
 3. Shop owner imports supplier product into their shop (`/catalog/products/<id>/import/`).
 4. Customer adds to cart and checks out to create an order.
 5. Customer initiates payment (`/payment/direct/`).
-6. SantimPay webhook updates order/payment status.
+6. SantimPay webhook updates order/payment status and creates shipment.
+7. Courier webhook updates shipment and order delivery status (`/logistics/webhook/<courier>/`).
 
 **3) Basic Frontend Data Screens**
 Use these endpoints as your first screens:
