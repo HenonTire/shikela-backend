@@ -24,6 +24,7 @@ class ProductSerializer(serializers.ModelSerializer):
     media = ProductMediaSerializer(many=True, required=False)
     category = CatagorySerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all(), source='category', write_only=True)
+    stock = serializers.IntegerField(write_only=True, required=False, min_value=0)
     supplier_id = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.filter(role="SUPPLIER"),
         source="supplier",
@@ -38,7 +39,7 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = ['id', 'name', 'description', 'sku', 'price', 'supplier_price', 'minimum_wholesale_quantity', 'shop_owner_price', 'supplier_id', 'supplier', 'category_id', 'category', 'is_active', 
-                  'weight', 'dimensions', 'tags', 'variants', 'media', 'average_rating', 'reviews_count']
+                  'weight', 'dimensions', 'tags', 'variants', 'media', 'stock', 'average_rating', 'reviews_count']
         read_only_fields = ['id']
 
     def get_supplier(self, obj):
@@ -65,6 +66,7 @@ class ProductSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         variants_data = validated_data.pop('variants', [])
         media_data = validated_data.pop('media', [])
+        default_stock = validated_data.pop('stock', None)
 
         request = self.context["request"]
         user = request.user
@@ -88,7 +90,18 @@ class ProductSerializer(serializers.ModelSerializer):
         
         # Create variants if provided
         for variant in variants_data:
+            if default_stock is not None and variant.get("stock") is None:
+                variant["stock"] = default_stock
             ProductVariant.objects.create(product=product, **variant)
+
+        # Ensure every product has a stock-carrying variant.
+        if not variants_data:
+            ProductVariant.objects.create(
+                product=product,
+                variant_name="Default",
+                price=product.price,
+                stock=default_stock if default_stock is not None else 1,
+            )
         
         # Create media if provided
         for media in media_data:

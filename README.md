@@ -309,6 +309,8 @@ Request fields:
 - `supplier_id` (uuid, optional)
 - `variants` (list, optional)
 - `media` (list, optional)
+- `stock` (integer >= 0, optional) if provided, sets default stock for variants without stock.
+  If no variants are provided, a `Default` variant is created with this stock (or `1` if omitted).
 
 `variants` item fields:
 - `variant_name` (string, required)
@@ -382,6 +384,7 @@ Request fields:
 - `shop_id` (uuid, required)
 - `product_id` (uuid, required)
 - `variant_id` (uuid, optional)
+- `marketer_contract_id` (uuid, optional)
 - `quantity` (integer >= 1, required)
 
 ```bash
@@ -422,6 +425,7 @@ Request fields:
 - `shop_id` (uuid, required)
 - `product_id` (uuid, required)
 - `variant_id` (uuid, optional)
+- `marketer_contract_id` (uuid, optional)
 - `quantity` (integer, optional, default 1)
 - `delivery_address` (string, required)
 - `payment_method` (string, required)
@@ -590,6 +594,8 @@ Request fields (create):
 - `tags` (list of strings, optional)
 - `variants` (list, optional)
 - `media` (list, optional)
+- `stock` (integer >= 0, optional) if provided, sets default stock for variants without stock.
+  If no variants are provided, a `Default` variant is created with this stock (or `1` if omitted).
 
 ```bash
 curl -X GET http://127.0.0.1:8000/supliers/products/ \
@@ -661,6 +667,96 @@ curl -X GET "http://127.0.0.1:8000/supliers/alerts/low-stock/?threshold=5" \
 
 ## Inventory
 Inventory models and services exist, but no API endpoints are currently exposed (`core/inventory/urls.py` is empty).
+
+## Marketer System
+Base path: `/marketer/`
+
+### New Features Added
+- Contract-based marketer relationships with shop owners.
+- Product-scoped contracts (marketers can only earn on assigned products).
+- Commission lifecycle: `PENDING` on payment, `APPROVED` on delivery.
+- Marketer dashboard with earnings, pending commissions, orders influenced, units sold, active contracts.
+- Shop owner control to activate, pause, resume, or end contracts.
+- Order/cart support for `marketer_contract_id` to attribute sales.
+
+### How It Works (Flow)
+1. **Create contract**: shop owner or marketer creates a contract for a shop + marketer + product list.
+2. **Activate contract**: shop owner activates it (only active contracts earn).
+3. **Customer purchase**: frontend sends `marketer_contract_id` when adding to cart or buying now.
+4. **Payment confirmed**: when order status becomes `PAID`, commission rows are created as `PENDING`.
+5. **Delivery confirmed**: when order status becomes `DELIVERED`, commissions become `APPROVED`.
+6. **Dashboards**: marketers and shop owners see totals, pending, and performance.
+
+### Contracts
+**Create Contract**
+Request fields:
+- `shop_id` (uuid, required)
+- `marketer_id` (uuid, required)
+- `commission_rate` (decimal percent, optional)
+- `start_date` (date, optional)
+- `end_date` (date, optional)
+- `product_ids` (list of product UUIDs, optional)
+
+```bash
+curl -X POST http://127.0.0.1:8000/marketer/contracts/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "shop_id": "<shop_id>",
+    "marketer_id": "<marketer_id>",
+    "commission_rate": "10.00",
+    "product_ids": ["<product_id_1>", "<product_id_2>"]
+  }'
+```
+
+**Update Contract (dates, rate, products)**
+```bash
+curl -X PATCH http://127.0.0.1:8000/marketer/contracts/<contract_id>/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "commission_rate": "12.50",
+    "product_ids": ["<product_id_1>"]
+  }'
+```
+
+**Contract Status Actions (Shop Owner)**
+```bash
+curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/activate/ \
+  -H "Authorization: Bearer <access_token>"
+
+curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/pause/ \
+  -H "Authorization: Bearer <access_token>"
+
+curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/resume/ \
+  -H "Authorization: Bearer <access_token>"
+
+curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/end/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+### Commissions
+**List Commissions**
+```bash
+curl -X GET http://127.0.0.1:8000/marketer/commissions/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Filter by status:
+`/marketer/commissions/?status=pending` or `approved`.
+
+### Dashboard
+**Marketer/Shop Owner Dashboard**
+```bash
+curl -X GET http://127.0.0.1:8000/marketer/dashboard/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+### Commission Flow Summary
+- Contract status must be `ACTIVE`.
+- Commissions are created when payment is confirmed (order status becomes `PAID`).
+- Commissions are approved when order status becomes `DELIVERED`.
+- Marketers only earn on products listed in the contract.
 
 ## Notes
 Some behavior depends on serializers and model constraints in the app code.

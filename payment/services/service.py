@@ -911,23 +911,29 @@ class PaymentService:
         return self._money(total)
 
     def _calculate_marketer_payouts(self, payment: Payment, total_amount: Decimal) -> List[Dict[str, Any]]:
+        from marketer.models import MarketerContract
+
         payouts: List[Dict[str, Any]] = []
-        marketers = payment.order.shop.marketers.all()
-        for marketer in marketers:
-            raw_rate = getattr(marketer, "marketer_commission", None)
-            if raw_rate is None:
+        order_items = payment.order.items.select_related("marketer_contract", "product").all()
+        for item in order_items:
+            contract = getattr(item, "marketer_contract", None)
+            if not contract or not contract.is_active():
                 continue
-            rate = self._normalize_marketer_rate(self._to_decimal(raw_rate))
+            if item.product and item.product.shop_id != contract.shop_id:
+                continue
+            rate = self._normalize_marketer_rate(self._to_decimal(contract.commission_rate))
             if rate <= Decimal("0.00"):
                 continue
-            amount = self._money(total_amount * rate)
+            amount = self._money(self._to_decimal(item.total) * rate)
             if amount <= Decimal("0.00"):
                 continue
             payouts.append(
                 {
-                    "user": marketer,
+                    "user": contract.marketer,
                     "rate": rate,
                     "amount": amount,
+                    "contract_id": str(contract.id),
+                    "order_item_id": str(item.id),
                 }
             )
         return payouts

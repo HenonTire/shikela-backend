@@ -1,5 +1,5 @@
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -85,3 +85,27 @@ class CourierFlowTests(TestCase):
         self.order.refresh_from_db()
         self.assertEqual(shipment.status, Shipment.Status.DELIVERED)
         self.assertEqual(self.order.status, Order.Status.DELIVERED)
+
+    @patch("courier.services.requests.post")
+    def test_create_shipment_calls_external_courier_api_when_base_url_set(self, mock_post):
+        self.partner.api_base_url = "https://api.hudhud.example"
+        self.partner.api_key = "secret-token"
+        self.partner.save(update_fields=["api_base_url", "api_key"])
+
+        mock_resp = Mock()
+        mock_resp.ok = True
+        mock_resp.json.return_value = {
+            "id": "SHIP-1001",
+            "tracking_id": "HDX-1001",
+            "status": "CREATED",
+        }
+        mock_post.return_value = mock_resp
+
+        shipment = create_shipment_for_order(self.order)
+
+        self.assertEqual(shipment.external_shipment_id, "SHIP-1001")
+        self.assertEqual(shipment.external_tracking_id, "HDX-1001")
+        self.assertEqual(shipment.status, Shipment.Status.CREATED)
+        self.assertEqual(mock_post.call_count, 1)
+        called_url = mock_post.call_args.args[0]
+        self.assertEqual(called_url, "https://api.hudhud.example/shipments")

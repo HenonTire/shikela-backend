@@ -83,6 +83,25 @@ class ProductSerializerTests(TestCase):
         self.assertEqual(Product.objects.count(), 1)
         self.assertEqual(ProductVariant.objects.filter(product=product).count(), 2)
 
+    def test_create_product_without_variants_creates_default_variant(self):
+        request = self.factory.post("/catalog/products/")
+        request.user = self.owner
+        serializer = ProductSerializer(
+            data={
+                "name": "No Variant Product",
+                "description": "auto default variant",
+                "price": "49.99",
+                "category_id": str(self.category.id),
+            },
+            context={"request": request},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        product = serializer.save()
+        variants = ProductVariant.objects.filter(product=product)
+        self.assertEqual(variants.count(), 1)
+        self.assertEqual(variants.first().variant_name, "Default")
+
 
 class ProductReviewAPITests(TestCase):
     def setUp(self):

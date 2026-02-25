@@ -3,12 +3,19 @@ import uuid
 from catalog.models import Product, ProductVariant
 from shop.models import Shop
 from .models import *
+from marketer.models import MarketerContract, MarketerContractProduct
 
 class CartService:
 
     @staticmethod
+    def _resolve_variant_for_product(product, variant=None):
+        if variant:
+            return variant
+        return ProductVariant.objects.filter(product=product).order_by("created_at").first()
+
+    @staticmethod
     @transaction.atomic
-    def add_to_cart(user, shop_id, product_id, variant_id=None, quantity=1):
+    def add_to_cart(user, shop_id, product_id, variant_id=None, quantity=1, marketer_contract_id=None):
 
         # 1. Validate shop and product
         shop = Shop.objects.get(id=shop_id)
@@ -18,9 +25,24 @@ class CartService:
         variant = None
         if variant_id:
             variant = ProductVariant.objects.get(id=variant_id, product=product)
+        else:
+            variant = CartService._resolve_variant_for_product(product)
+
+        # 2b. Optional marketer contract
+        marketer_contract = None
+        if marketer_contract_id:
+            marketer_contract = MarketerContract.objects.select_related("shop").filter(id=marketer_contract_id).first()
+            if not marketer_contract or not marketer_contract.is_active():
+                raise ValueError("Marketer contract is not active")
+            if marketer_contract.shop_id != shop.id:
+                raise ValueError("Marketer contract does not belong to this shop")
+            if not MarketerContractProduct.objects.filter(contract=marketer_contract, product=product).exists():
+                raise ValueError("Product is not part of the marketer contract")
 
         # 3. Check stock
-        stock = variant.stock if variant else product.stock
+        if not variant:
+            raise ValueError("No variant available for this product")
+        stock = variant.stock
         if quantity > stock:
             raise ValueError("Insufficient stock")
 
@@ -44,7 +66,12 @@ class CartService:
             if new_qty > stock:
                 raise ValueError("Insufficient stock")
             item.quantity = new_qty
+            if marketer_contract:
+                item.marketer_contract = marketer_contract
             item.save()
+        elif marketer_contract:
+            item.marketer_contract = marketer_contract
+            item.save(update_fields=["marketer_contract"])
 
         # 6. Return cart
         return cart
@@ -59,22 +86,50 @@ class OrderService:
                 return candidate
 
     @staticmethod
+    def _resolve_variant_for_item(item):
+        variant = item.get("variant")
+        if variant:
+            return variant
+        product = item["product"]
+        return ProductVariant.objects.filter(product=product).order_by("created_at").first()
+
+    @staticmethod
     @transaction.atomic
     def create_order(user, shop, items, delivery_address, payment_method):
         """
         items: list of dicts like:
         [{"product": Product obj, "variant": Variant obj or None, "quantity": 2}]
         """
+        normalized_items = []
         # 1. Validate stock
         for item in items:
-            stock = item["variant"].stock if item.get("variant") else item["product"].stock
+            resolved_variant = OrderService._resolve_variant_for_item(item)
+            if not resolved_variant:
+                raise ValueError(f"No variant available for {item['product'].name}")
+            stock = resolved_variant.stock
             if item["quantity"] > stock:
                 raise ValueError(f"Insufficient stock for {item['product'].name}")
+            contract = item.get("marketer_contract")
+            if contract:
+                if not contract.is_active():
+                    raise ValueError("Marketer contract is not active")
+                if contract.shop_id != shop.id:
+                    raise ValueError("Marketer contract does not belong to this shop")
+                if not MarketerContractProduct.objects.filter(contract=contract, product=item["product"]).exists():
+                    raise ValueError("Product is not part of the marketer contract")
+            normalized_items.append(
+                {
+                    "product": item["product"],
+                    "variant": resolved_variant,
+                    "quantity": item["quantity"],
+                    "marketer_contract": contract,
+                }
+            )
 
         # 2. Calculate totals
         subtotal = sum(
             (item["variant"].price if item.get("variant") else item["product"].price) * item["quantity"]
-            for item in items
+            for item in normalized_items
         )
         total = subtotal  # + delivery_fee if any
 
@@ -91,11 +146,12 @@ class OrderService:
         )
 
         # 4. Create OrderItems
-        for item in items:
+        for item in normalized_items:
             OrderItem.objects.create(
                 order=order,
                 product=item["product"],
                 variant=item.get("variant"),
+                marketer_contract=item.get("marketer_contract"),
                 product_name=item["product"].name,
                 sku=item["product"].sku,
                 price=item["variant"].price if item.get("variant") else item["product"].price,

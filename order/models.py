@@ -23,6 +23,13 @@ class CartItem(models.Model):
 
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     variant = models.ForeignKey(ProductVariant, null=True, blank=True, on_delete=models.CASCADE)
+    marketer_contract = models.ForeignKey(
+        "marketer.MarketerContract",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cart_items",
+    )
 
     quantity = models.PositiveIntegerField()
 
@@ -63,6 +70,13 @@ class OrderItem(models.Model):
     order = models.ForeignKey(Order, related_name="items", on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True)
     variant = models.ForeignKey(ProductVariant, on_delete=models.SET_NULL, null=True)
+    marketer_contract = models.ForeignKey(
+        "marketer.MarketerContract",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="order_items",
+    )
 
     # Snapshot fields
     product_name = models.CharField(max_length=255)

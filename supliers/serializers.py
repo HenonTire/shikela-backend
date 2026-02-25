@@ -22,6 +22,7 @@ class SupplierProductMediaSerializer(serializers.ModelSerializer):
 class SupplierProductSerializer(serializers.ModelSerializer):
     variants = SupplierProductVariantSerializer(many=True, required=False)
     media = SupplierProductMediaSerializer(many=True, required=False)
+    stock = serializers.IntegerField(write_only=True, required=False, min_value=0)
     category_id = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
         source="category",
@@ -50,6 +51,7 @@ class SupplierProductSerializer(serializers.ModelSerializer):
             "tags",
             "variants",
             "media",
+            "stock",
             "created_at",
             "updated_at",
         ]
@@ -77,6 +79,7 @@ class SupplierProductSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         variants_data = validated_data.pop("variants", [])
         media_data = validated_data.pop("media", [])
+        default_stock = validated_data.pop("stock", None)
         request = self.context["request"]
         product = Product.objects.create(
             supplier=request.user,
@@ -84,7 +87,16 @@ class SupplierProductSerializer(serializers.ModelSerializer):
             **validated_data,
         )
         for variant_data in variants_data:
+            if default_stock is not None and variant_data.get("stock") is None:
+                variant_data["stock"] = default_stock
             ProductVariant.objects.create(product=product, **variant_data)
+        if not variants_data:
+            ProductVariant.objects.create(
+                product=product,
+                variant_name="Default",
+                price=product.price,
+                stock=default_stock if default_stock is not None else 1,
+            )
         for media_data_item in media_data:
             ProductMedia.objects.create(product=product, **media_data_item)
         return product
@@ -101,4 +113,3 @@ class SupplierDashboardSerializer(serializers.Serializer):
     pending_payout = serializers.DecimalField(max_digits=14, decimal_places=2)
     this_month_revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
     cards = serializers.ListField(child=serializers.DictField())
-

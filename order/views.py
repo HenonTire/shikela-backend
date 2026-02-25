@@ -4,6 +4,7 @@ from rest_framework import status, permissions
 from .serializers import CartItemCreateSerializer
 from .services import CartService, OrderService 
 from .models import *
+from marketer.models import MarketerContract
 
 
 class AddToCartView(APIView):
@@ -30,6 +31,7 @@ class AddToCartView(APIView):
                 "id": i.id,
                 "product": i.product.name,
                 "variant": i.variant.variant_name if i.variant else None,
+                "marketer_contract_id": str(i.marketer_contract_id) if i.marketer_contract_id else None,
                 "quantity": i.quantity,
                 "price": i.variant.price if i.variant else i.product.price
             } for i in items
@@ -57,6 +59,7 @@ class ListCartItemsView(APIView):
                 "id": item.id,
                 "product": item.product.name,
                 "variant": item.variant.variant_name if item.variant else None,
+                "marketer_contract_id": str(item.marketer_contract_id) if item.marketer_contract_id else None,
                 "quantity": item.quantity,
                 "price": item.variant.price if item.variant else item.product.price
             })
@@ -74,6 +77,7 @@ class BuyNowView(APIView):
         shop_id = data.get("shop_id")
         product_id = data.get("product_id")
         variant_id = data.get("variant_id")
+        marketer_contract_id = data.get("marketer_contract_id")
         quantity = data.get("quantity", 1)
         delivery_address = data.get("delivery_address")
         payment_method = data.get("payment_method")
@@ -85,6 +89,11 @@ class BuyNowView(APIView):
             shop = Shop.objects.get(id=shop_id)
             product = Product.objects.get(id=product_id, shop=shop)
             variant = ProductVariant.objects.get(id=variant_id, product=product) if variant_id else None
+            marketer_contract = None
+            if marketer_contract_id:
+                marketer_contract = MarketerContract.objects.filter(id=marketer_contract_id).first()
+                if not marketer_contract:
+                    return Response({"detail": "Invalid marketer_contract_id"}, status=status.HTTP_400_BAD_REQUEST)
         except (Shop.DoesNotExist, Product.DoesNotExist, ProductVariant.DoesNotExist):
             return Response({"detail": "Invalid product/shop/variant"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -92,7 +101,7 @@ class BuyNowView(APIView):
             order = OrderService.create_order(
                 user=request.user,
                 shop=shop,
-                items=[{"product": product, "variant": variant, "quantity": int(quantity)}],
+                items=[{"product": product, "variant": variant, "quantity": int(quantity), "marketer_contract": marketer_contract}],
                 delivery_address=delivery_address,
                 payment_method=payment_method
             )
@@ -140,8 +149,9 @@ class CheckoutCartView(APIView):
                 "product": item.product,
                 "variant": item.variant,
                 "quantity": item.quantity,
+                "marketer_contract": item.marketer_contract,
             }
-            for item in cart.items.select_related("product", "variant").all()
+            for item in cart.items.select_related("product", "variant", "marketer_contract").all()
         ]
 
         try:

@@ -31,6 +31,7 @@ from payment.services.service import (
     PaymentService,
     PaymentServiceError,
 )
+from marketer.services import MarketerCommissionService
 
 
 def _get_order_merchant_id(order: Order) -> str:
@@ -353,6 +354,7 @@ class SantimPayWebhookView(View):
                     if previous_order_status != Order.Status.PAID and order.status == Order.Status.PAID:
                         _apply_stock_for_paid_order(order)
                         service.record_settlement_earnings(payment)
+                        MarketerCommissionService.create_pending_for_order(order)
                         try:
                             create_shipment_for_order(order)
                         except LogisticsError:

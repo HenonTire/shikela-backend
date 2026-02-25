@@ -98,3 +98,32 @@ class OrderViewsTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("orders", response.data)
         self.assertEqual(len(response.data["orders"]), 1)
+
+    def test_buynow_without_variant_id_uses_default_variant(self):
+        product_without_variant = Product.objects.create(
+            name="Order Test Product No Variant",
+            shop=self.shop,
+            category=self.category,
+            price="60.00",
+            description="test no variant",
+        )
+        ProductVariant.objects.create(
+            product=product_without_variant,
+            variant_name="Default",
+            price="60.00",
+            stock=15,
+        )
+
+        payload = {
+            "shop_id": str(self.shop.id),
+            "product_id": str(product_without_variant.id),
+            "quantity": 1,
+            "delivery_address": "123 Main St",
+            "payment_method": "santimpay",
+        }
+
+        response = self.client.post("/order/create/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        created = Order.objects.get(id=response.data["order_id"])
+        self.assertEqual(created.items.count(), 1)
+        self.assertIsNotNone(created.items.first().variant_id)

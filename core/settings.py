@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     'payment',
     'courier',
     'supliers',
+    'marketer.apps.MarketerConfig',
 
 ]
 
