@@ -23,6 +23,16 @@ Example header:
 Base path: `/auth/`
 
 **Register Customer**
+Request fields:
+- `email` (string, required)
+- `password` (string, required)
+- `first_name` (string, optional)
+- `last_name` (string, optional)
+- `phone_number` (string, optional)
+- `merchant_id` (string, optional)
+- `location` (string, optional)
+- `badge` (string, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/register/ \
   -H "Content-Type: application/json" \
@@ -59,6 +69,16 @@ curl -X GET http://127.0.0.1:8000/auth/user/1/ \
 ```
 
 **Register Shop Owner**
+Request fields:
+- `first_name` (string, optional)
+- `last_name` (string, optional)
+- `email` (string, required)
+- `password` (string, required)
+- `merchant_id` (string, optional)
+- `phone_number` (string, optional)
+- `avatar` (file, optional)
+- `license_document` (file, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/register-shop-owner/ \
   -H "Content-Type: application/json" \
@@ -73,6 +93,19 @@ curl -X POST http://127.0.0.1:8000/auth/register-shop-owner/ \
 ```
 
 **Register Supplier**
+Request fields:
+- `company_name` (string, optional)
+- `email` (string, required)
+- `password` (string, required)
+- `merchant_id` (string, optional)
+- `phone_number` (string, optional)
+- `location` (string, optional)
+- `avatar` (file, optional)
+- `license_document` (file, optional)
+- `policy` (file, optional)
+- `bank_account` (string enum, optional)
+- `bank_account_number` (string, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/register-supplier/ \
   -H "Content-Type: application/json" \
@@ -87,6 +120,17 @@ curl -X POST http://127.0.0.1:8000/auth/register-supplier/ \
 ```
 
 **Register Courier**
+Request fields:
+- `company_name` (string, optional)
+- `email` (string, required)
+- `password` (string, required)
+- `merchant_id` (string, optional)
+- `phone_number` (string, optional)
+- `location` (string, optional)
+- `avatar` (file, optional)
+- `license_document` (file, optional)
+- `is_available` (boolean, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/register-courier/ \
   -H "Content-Type: application/json" \
@@ -101,6 +145,27 @@ curl -X POST http://127.0.0.1:8000/auth/register-courier/ \
 ```
 
 **Register Marketer**
+Request fields:
+- `first_name` (string, optional)
+- `last_name` (string, optional)
+- `company_name` (string, optional)
+- `avatar` (file, optional)
+- `email` (string, required)
+- `merchant_id` (string, optional)
+- `phone_number` (string, optional)
+- `bio` (string, optional)
+- `base_price` (decimal, optional)
+- `marketer_commission` (decimal, optional)
+- `followers_count` (integer, optional)
+- `instagram` (url, optional)
+- `marketer_type` (enum: `CREATOR`|`AGENCY`, required)
+- `pricing_type` (enum: `PER_POST`|`PER_CAMPAIGN`|`MONTHLY`, optional)
+- `services` (enum string, optional)
+- `team_size` (integer, optional)
+- `tiktok` (url, optional)
+- `website` (url, optional)
+- `youtube` (url, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/register-marketer/ \
   -H "Content-Type: application/json" \
@@ -117,6 +182,11 @@ curl -X POST http://127.0.0.1:8000/auth/register-marketer/ \
 ```
 
 **Create Payment Method (Shop Owner)**
+Request fields:
+- `payment_type` (enum: `BANK`|`TELEBIRR`|`MPESA`, required)
+- `account_number` (string, required if `payment_type=BANK`)
+- `phone_number` (string, required if `payment_type=TELEBIRR` or `MPESA`)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/create-payment-method/ \
   -H "Authorization: Bearer <access_token>" \
@@ -131,6 +201,13 @@ curl -X POST http://127.0.0.1:8000/auth/create-payment-method/ \
 Base path: `/shops/`
 
 **Create Shop**
+Request fields:
+- `name` (string, required)
+- `description` (string, optional)
+- `domain` (string, optional)
+- `theme_id` (uuid, optional)
+- `marketer_ids` (list of marketer UUIDs, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/shops/ \
   -H "Authorization: Bearer <access_token>" \
@@ -155,6 +232,14 @@ curl -X GET http://127.0.0.1:8000/shops/shops/<shop_id>/ \
 ```
 
 **Create Theme**
+Request fields:
+- `name` (string, required)
+- `slug` (string, required)
+- `description` (string, optional)
+- `preview_image` (file, optional)
+- `version` (string, required)
+- `is_active` (boolean, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/shops/themes/ \
   -H "Authorization: Bearer <access_token>" \
@@ -169,6 +254,13 @@ curl -X POST http://127.0.0.1:8000/shops/themes/ \
 ```
 
 **Create Theme Settings**
+Request fields:
+- `primary_color` (string, optional)
+- `secondary_color` (string, optional)
+- `logo` (file, optional)
+- `banner_image` (file, optional)
+- `font_family` (string, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/shops/theme-settings/ \
   -H "Authorization: Bearer <access_token>" \
@@ -185,6 +277,12 @@ curl -X POST http://127.0.0.1:8000/shops/theme-settings/ \
 Base path: `/catalog/`
 
 **Create Category**
+Request fields:
+- `name` (string, required)
+- `description` (string, optional)
+- `parent` (uuid, optional)
+- `slug` (string, optional, auto-generated if omitted)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/catalog/categories/ \
   -H "Authorization: Bearer <access_token>" \
@@ -196,6 +294,35 @@ curl -X POST http://127.0.0.1:8000/catalog/categories/ \
 ```
 
 **Create Product**
+Request fields:
+- `name` (string, required)
+- `description` (string, optional)
+- `price` (decimal, required)
+- `supplier_price` (decimal, optional)
+- `minimum_wholesale_quantity` (integer, optional)
+- `shop_owner_price` (decimal, optional)
+- `category_id` (uuid, optional)
+- `is_active` (boolean, optional)
+- `weight` (float, optional)
+- `dimensions` (json, optional)
+- `tags` (list of strings, optional)
+- `supplier_id` (uuid, optional)
+- `variants` (list, optional)
+- `media` (list, optional)
+
+`variants` item fields:
+- `variant_name` (string, required)
+- `price` (decimal, optional)
+- `attributes` (json, optional)
+- `stock` (integer, optional)
+
+`media` item fields:
+- `media_type` (enum: `IMAGE`|`VIDEO`|`DOCUMENT`, required)
+- `file` (file path or upload, required)
+- `caption` (string, optional)
+- `is_primary` (boolean, optional)
+- `order` (integer, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/catalog/products/ \
   -H "Authorization: Bearer <access_token>" \
@@ -223,6 +350,11 @@ curl -X POST http://127.0.0.1:8000/catalog/products/<supplier_product_id>/import
 ```
 
 **Create Review**
+Request fields:
+- `rating` (integer 1-5, required)
+- `title` (string, optional)
+- `comment` (string, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/catalog/products/<product_id>/reviews/ \
   -H "Authorization: Bearer <access_token>" \
@@ -246,6 +378,12 @@ curl -X PATCH http://127.0.0.1:8000/catalog/reviews/<review_id>/ \
 Base path: `/order/`
 
 **Add to Cart**
+Request fields:
+- `shop_id` (uuid, required)
+- `product_id` (uuid, required)
+- `variant_id` (uuid, optional)
+- `quantity` (integer >= 1, required)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/order/cart/add/ \
   -H "Authorization: Bearer <access_token>" \
@@ -265,6 +403,10 @@ curl -X GET http://127.0.0.1:8000/order/cart/items/ \
 ```
 
 **Checkout Cart**
+Request fields:
+- `delivery_address` (string, required)
+- `payment_method` (string, required)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/order/cart/checkout/ \
   -H "Authorization: Bearer <access_token>" \
@@ -276,6 +418,14 @@ curl -X POST http://127.0.0.1:8000/order/cart/checkout/ \
 ```
 
 **Buy Now (Create Order)**
+Request fields:
+- `shop_id` (uuid, required)
+- `product_id` (uuid, required)
+- `variant_id` (uuid, optional)
+- `quantity` (integer, optional, default 1)
+- `delivery_address` (string, required)
+- `payment_method` (string, required)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/order/create/ \
   -H "Authorization: Bearer <access_token>" \
@@ -306,6 +456,12 @@ Set these in Django `settings.py` or environment variables:
 `SANTIMPAY_NOTIFY_URL`
 
 **Direct Payment**
+Request fields:
+- `order_id` (uuid, required)
+- `payment_method` (string, required)
+- `phone_number` (string, required)
+- `notify_url` (url, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/payment/direct/ \
   -H "Authorization: Bearer <access_token>" \
@@ -326,6 +482,9 @@ curl -X POST http://127.0.0.1:8000/payment/webhook/santimpay/ \
 ```
 
 **Request Payout**
+Request fields:
+- `confirm` (boolean, optional, default true)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/payment/payouts/request/ \
   -H "Authorization: Bearer <access_token>" \
@@ -340,6 +499,11 @@ curl -X GET http://127.0.0.1:8000/payment/payouts/history/ \
 ```
 
 **Request Refund**
+Request fields:
+- `payment_id` (uuid, required)
+- `amount` (decimal, required)
+- `reason` (string, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/payment/refunds/request/ \
   -H "Authorization: Bearer <access_token>" \
@@ -373,6 +537,21 @@ curl -X GET http://127.0.0.1:8000/supliers/dashboard/ \
 ```
 
 **List/Create Supplier Products**
+Request fields (create):
+- `name` (string, required)
+- `description` (string, optional)
+- `price` (decimal, required)
+- `supplier_price` (decimal, optional)
+- `minimum_wholesale_quantity` (integer, optional)
+- `shop_owner_price` (decimal, optional)
+- `category_id` (uuid, optional)
+- `is_active` (boolean, optional)
+- `weight` (float, optional)
+- `dimensions` (json, optional)
+- `tags` (list of strings, optional)
+- `variants` (list, optional)
+- `media` (list, optional)
+
 ```bash
 curl -X GET http://127.0.0.1:8000/supliers/products/ \
   -H "Authorization: Bearer <access_token>"
@@ -385,6 +564,12 @@ curl -X GET http://127.0.0.1:8000/supliers/products/<product_id>/ \
 ```
 
 **Add Variant to Supplier Product**
+Request fields:
+- `variant_name` (string, required)
+- `price` (decimal, optional)
+- `attributes` (json, optional)
+- `stock` (integer, required)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/supliers/products/<product_id>/variants/ \
   -H "Authorization: Bearer <access_token>" \
@@ -398,6 +583,13 @@ curl -X POST http://127.0.0.1:8000/supliers/products/<product_id>/variants/ \
 ```
 
 **Add Media to Supplier Product**
+Request fields:
+- `media_type` (enum: `IMAGE`|`VIDEO`|`DOCUMENT`, required)
+- `file` (file path or upload, required)
+- `caption` (string, optional)
+- `is_primary` (boolean, optional)
+- `order` (integer, optional)
+
 ```bash
 curl -X POST http://127.0.0.1:8000/supliers/products/<product_id>/media/ \
   -H "Authorization: Bearer <access_token>" \
@@ -412,6 +604,9 @@ curl -X POST http://127.0.0.1:8000/supliers/products/<product_id>/media/ \
 ```
 
 **Update Variant Stock**
+Request fields:
+- `stock` (integer >= 0, required)
+
 ```bash
 curl -X PATCH http://127.0.0.1:8000/supliers/variants/<variant_id>/stock/ \
   -H "Authorization: Bearer <access_token>" \
