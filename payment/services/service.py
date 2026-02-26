@@ -11,6 +11,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction, models
 
+from catalog.models import ProductVariant
 from order.models import Order
 from payment.models import Earning, LedgerEntry, Payment, Refund, PayoutRequest
 from account.models import PaymentMethod
@@ -272,6 +273,7 @@ class PaymentService:
                 payment.status = Payment.Status.FAILED
                 payment.save(update_fields=["status", "updated_at"])
             if order.status == Order.Status.PENDING:
+                self._restock_order_variants(order)
                 order.status = Order.Status.CANCELLED
                 order.save(update_fields=["status", "updated_at"])
 
@@ -281,6 +283,8 @@ class PaymentService:
     def prepare_split_settlement(self, payment: Payment) -> Dict[str, Any]:
         if payment.status != Payment.Status.COMPLETED:
             raise PaymentServiceError("Split settlement is only allowed for completed payments")
+        if payment.order.status != Order.Status.DELIVERED:
+            raise PaymentServiceError("Split settlement is only allowed after delivery is completed")
 
         meta = dict(payment.metadata or {})
         settlement = meta.get("settlement", {})
@@ -300,7 +304,7 @@ class PaymentService:
         marketer_total = self._money(sum((p["amount"] for p in marketer_payouts), Decimal("0.00")))
 
         dropshipper_amount = self._money(
-            total_amount - (Decimal("0.00") if platform_user else commission_amount) - supplier_amount - marketer_total
+            total_amount - commission_amount - supplier_amount - marketer_total
         )
         if dropshipper_amount < Decimal("0.00"):
             raise PaymentServiceError(
@@ -392,6 +396,8 @@ class PaymentService:
 
     @transaction.atomic
     def record_settlement_earnings(self, payment: Payment) -> Dict[str, Any]:
+        if payment.order.status != Order.Status.DELIVERED:
+            raise PaymentServiceError("Settlement earnings can be recorded only after delivery is completed")
         settlement = self.prepare_split_settlement(payment)
         if settlement.get("earnings_recorded") is True:
             return settlement
@@ -580,6 +586,8 @@ class PaymentService:
         """
         if payment.status != Payment.Status.COMPLETED:
             raise PaymentServiceError("Split payout is only allowed for completed payments")
+        if payment.order.status != Order.Status.DELIVERED:
+            raise PaymentServiceError("Split payout is only allowed after delivery is completed")
 
         meta = dict(payment.metadata or {})
         settlement = meta.get("settlement", {})
@@ -741,7 +749,7 @@ class PaymentService:
     @staticmethod
     def _can_transition(current: str, target: str) -> bool:
         allowed = {
-            "PENDING": {"PROCESSING"},
+            "PENDING": {"PROCESSING", "COMPLETED", "FAILED"},
             "PROCESSING": {"COMPLETED", "FAILED"},
             "COMPLETED": {"REFUNDED"},
             "FAILED": set(),
@@ -937,6 +945,22 @@ class PaymentService:
                 }
             )
         return payouts
+
+    def _restock_order_variants(self, order: Order) -> None:
+        qty_by_variant: Dict[str, int] = {}
+        for item in order.items.select_related("variant").all():
+            if not item.variant_id:
+                continue
+            key = str(item.variant_id)
+            qty_by_variant[key] = qty_by_variant.get(key, 0) + int(item.quantity)
+
+        if not qty_by_variant:
+            return
+
+        variants = ProductVariant.objects.select_for_update().filter(id__in=qty_by_variant.keys())
+        for variant in variants:
+            variant.stock += qty_by_variant[str(variant.id)]
+            variant.save(update_fields=["stock", "updated_at"])
 
     @staticmethod
     def _normalize_marketer_rate(raw_value: Decimal) -> Decimal:

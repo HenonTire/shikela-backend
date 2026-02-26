@@ -1,10 +1,17 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
+from django.db import transaction
 from .serializers import CartItemCreateSerializer
 from .services import CartService, OrderService 
 from .models import *
 from marketer.models import MarketerContract
+
+
+def _item_unit_price(product, variant=None):
+    if variant and variant.price is not None:
+        return variant.price
+    return product.price
 
 
 class AddToCartView(APIView):
@@ -24,7 +31,7 @@ class AddToCartView(APIView):
         # Optional: return cart summary
         items = cart.items.select_related("product", "variant").all()
         subtotal = sum(
-            (i.variant.price if i.variant else i.product.price) * i.quantity for i in items
+            _item_unit_price(i.product, i.variant) * i.quantity for i in items
         )
         data = [
             {
@@ -33,7 +40,7 @@ class AddToCartView(APIView):
                 "variant": i.variant.variant_name if i.variant else None,
                 "marketer_contract_id": str(i.marketer_contract_id) if i.marketer_contract_id else None,
                 "quantity": i.quantity,
-                "price": i.variant.price if i.variant else i.product.price
+                "price": _item_unit_price(i.product, i.variant)
             } for i in items
         ]
 
@@ -61,7 +68,7 @@ class ListCartItemsView(APIView):
                 "variant": item.variant.variant_name if item.variant else None,
                 "marketer_contract_id": str(item.marketer_contract_id) if item.marketer_contract_id else None,
                 "quantity": item.quantity,
-                "price": item.variant.price if item.variant else item.product.price
+                "price": _item_unit_price(item.product, item.variant)
             })
 
         return Response({"items": data})
@@ -81,6 +88,7 @@ class BuyNowView(APIView):
         quantity = data.get("quantity", 1)
         delivery_address = data.get("delivery_address")
         payment_method = data.get("payment_method")
+        delivery_method = data.get("delivery_method", Order.DeliveryMethod.COURIER)
 
         if not shop_id or not product_id or not delivery_address or not payment_method:
             return Response({"detail": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
@@ -98,19 +106,23 @@ class BuyNowView(APIView):
             return Response({"detail": "Invalid product/shop/variant"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            if delivery_method not in {Order.DeliveryMethod.COURIER, Order.DeliveryMethod.SELLER}:
+                return Response({"detail": "Invalid delivery_method"}, status=status.HTTP_400_BAD_REQUEST)
             order = OrderService.create_order(
                 user=request.user,
                 shop=shop,
                 items=[{"product": product, "variant": variant, "quantity": int(quantity), "marketer_contract": marketer_contract}],
                 delivery_address=delivery_address,
-                payment_method=payment_method
+                payment_method=payment_method,
+                delivery_method=delivery_method,
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
             "order_id": str(order.id),
-            "status": order.status
+            "status": order.status,
+            "delivery_method": order.delivery_method,
         }, status=status.HTTP_201_CREATED)
     
 # e.g
@@ -132,6 +144,7 @@ class CheckoutCartView(APIView):
         user = request.user
         delivery_address = request.data.get("delivery_address")
         payment_method = request.data.get("payment_method")
+        delivery_method = request.data.get("delivery_method", Order.DeliveryMethod.COURIER)
 
         if not delivery_address or not payment_method:
             return Response(
@@ -155,19 +168,27 @@ class CheckoutCartView(APIView):
         ]
 
         try:
-            order = OrderService.create_order(
-                user=user,
-                shop=cart.shop,
-                items=items,
-                delivery_address=delivery_address,
-                payment_method=payment_method
-            )
+            if delivery_method not in {Order.DeliveryMethod.COURIER, Order.DeliveryMethod.SELLER}:
+                return Response({"detail": "Invalid delivery_method"}, status=status.HTTP_400_BAD_REQUEST)
+            with transaction.atomic():
+                order = OrderService.create_order(
+                    user=user,
+                    shop=cart.shop,
+                    items=items,
+                    delivery_address=delivery_address,
+                    payment_method=payment_method,
+                    delivery_method=delivery_method,
+                )
+                cart.items.all().delete()
+                cart.is_active = False
+                cart.save(update_fields=["is_active", "updated_at"])
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
             "order_id": str(order.id),
             "status": order.status,
+            "delivery_method": order.delivery_method,
             "total_amount": float(order.total_amount)
         }, status=status.HTTP_201_CREATED)
 #   e.g  
@@ -185,6 +206,7 @@ class ListOrdersView(APIView):
                 "id": str(order.id),
                 "shop": order.shop.name,
                 "status": order.status,
+                "delivery_method": order.delivery_method,
                 "total_amount": float(order.total_amount),
                 "created_at": order.created_at.isoformat(),
                 "items": [
@@ -192,8 +214,32 @@ class ListOrdersView(APIView):
                         "product": item.product.name,
                         "variant": item.variant.variant_name if item.variant else None,
                         "quantity": item.quantity,
-                        "price": float(item.variant.price if item.variant else item.product.price)
+                        "price": float(_item_unit_price(item.product, item.variant))
                     } for item in order.items.select_related("product", "variant").all()
                 ]
             })
         return Response({"orders": data})
+
+
+class OrderDeliveryMethodUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        order = Order.objects.select_related("shop__owner").filter(pk=pk).first()
+        if not order:
+            return Response({"detail": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+        if order.shop.owner_id != request.user.id:
+            return Response({"detail": "Only shop owner can update delivery method"}, status=status.HTTP_403_FORBIDDEN)
+
+        method = request.data.get("delivery_method")
+        if method not in {Order.DeliveryMethod.COURIER, Order.DeliveryMethod.SELLER}:
+            return Response({"detail": "Invalid delivery_method"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if hasattr(order, "shipment"):
+            return Response({"detail": "Delivery method cannot change after shipment is created"}, status=status.HTTP_400_BAD_REQUEST)
+        if order.status in {Order.Status.SHIPPED, Order.Status.DELIVERED, Order.Status.CANCELLED, Order.Status.REFUNDED}:
+            return Response({"detail": "Delivery method cannot change in current order status"}, status=status.HTTP_400_BAD_REQUEST)
+
+        order.delivery_method = method
+        order.save(update_fields=["delivery_method", "updated_at"])
+        return Response({"order_id": str(order.id), "delivery_method": order.delivery_method}, status=status.HTTP_200_OK)

@@ -47,6 +47,9 @@ class Order(models.Model):
         DELIVERED = "delivered"
         CANCELLED = "cancelled"
         REFUNDED = "refunded"
+    class DeliveryMethod(models.TextChoices):
+        COURIER = "courier", "Courier"
+        SELLER = "seller", "Seller"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order_number = models.CharField(max_length=20, unique=True)
@@ -61,6 +64,11 @@ class Order(models.Model):
 
     payment_method = models.CharField(max_length=50)
     payment_reference = models.CharField(max_length=100, blank=True, null=True)
+    delivery_method = models.CharField(
+        max_length=20,
+        choices=DeliveryMethod.choices,
+        default=DeliveryMethod.COURIER,
+    )
 
     delivery_address = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)

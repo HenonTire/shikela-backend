@@ -28,11 +28,12 @@ class MarketerCommissionService:
         return (base_amount * rate_percent / Decimal("100.00")).quantize(Decimal("0.01"))
 
     @staticmethod
-    def create_pending_for_order(order: Order) -> None:
+    def create_pending_for_order(order: Order):
         items = (
             order.items.select_related("product", "variant__product", "marketer_contract")
             .all()
         )
+        created_commissions = []
         for item in items:
             contract = getattr(item, "marketer_contract", None)
             if not contract or not contract.is_active():
@@ -51,7 +52,7 @@ class MarketerCommissionService:
             if amount <= Decimal("0.00"):
                 continue
 
-            MarketerCommission.objects.get_or_create(
+            commission, created = MarketerCommission.objects.get_or_create(
                 contract=contract,
                 order=order,
                 order_item=item,
@@ -62,11 +63,26 @@ class MarketerCommissionService:
                     "status": MarketerCommission.Status.PENDING,
                 },
             )
+            if created:
+                created_commissions.append(commission)
+        return created_commissions
 
     @staticmethod
-    def approve_for_order(order: Order) -> None:
+    def approve_for_order(order: Order):
         now = timezone.now()
+        commissions = list(
+            MarketerCommission.objects.filter(
+                order=order,
+                status=MarketerCommission.Status.PENDING,
+            )
+        )
+        if not commissions:
+            return []
         MarketerCommission.objects.filter(
             order=order,
             status=MarketerCommission.Status.PENDING,
         ).update(status=MarketerCommission.Status.APPROVED, approved_at=now)
+        for commission in commissions:
+            commission.status = MarketerCommission.Status.APPROVED
+            commission.approved_at = now
+        return commissions

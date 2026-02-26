@@ -2,6 +2,7 @@
 from pathlib import Path
 from datetime import timedelta
 import os
+import glob
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -32,6 +33,7 @@ INSTALLED_APPS = [
     'courier',
     'supliers',
     'marketer.apps.MarketerConfig',
+    'notifications',
 
 ]
 
@@ -147,3 +149,14 @@ SANTIMPAY_NOTIFY_URL = os.getenv("SANTIMPAY_NOTIFY_URL", "http://localhost:8000/
 PLATFORM_USER_ID = os.getenv("PLATFORM_USER_ID", "")
 PLATFORM_USER_EMAIL = os.getenv("PLATFORM_USER_EMAIL", "")
 PLATFORM_MERCHANT_ID = os.getenv("PLATFORM_MERCHANT_ID", "")
+
+# Firebase Cloud Messaging
+FCM_PROJECT_ID = os.getenv("FCM_PROJECT_ID", "")
+# Auto-discover service account from notifications/fcm if env var is not set.
+_default_fcm_service_account = ""
+_fcm_candidates = glob.glob(str(BASE_DIR / "notifications" / "fcm" / "*firebase-adminsdk*.json"))
+if _fcm_candidates:
+    _default_fcm_service_account = _fcm_candidates[0]
+
+FCM_SERVICE_ACCOUNT_FILE = os.getenv("FCM_SERVICE_ACCOUNT_FILE", _default_fcm_service_account)
+FCM_SERVICE_ACCOUNT_JSON = os.getenv("FCM_SERVICE_ACCOUNT_JSON", "")

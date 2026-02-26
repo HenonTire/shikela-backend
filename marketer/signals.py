@@ -3,6 +3,7 @@ from django.dispatch import receiver
 
 from order.models import Order
 from .services import MarketerCommissionService
+from notifications.services import NotificationService, NotificationTemplates
 
 
 @receiver(pre_save, sender=Order)
@@ -20,4 +21,17 @@ def _approve_commissions_on_delivery(sender, instance: Order, **kwargs):
     if previous == instance.status:
         return
     if instance.status == Order.Status.DELIVERED:
-        MarketerCommissionService.approve_for_order(instance)
+        commissions = MarketerCommissionService.approve_for_order(instance)
+        for commission in commissions:
+            try:
+                title, message, payload = NotificationTemplates.commission_approved(instance, commission)
+                NotificationService.notify(
+                    user=commission.contract.marketer,
+                    notification_type="commission_approved",
+                    title=title,
+                    message=message,
+                    payload=payload,
+                )
+            except Exception:
+                # Never break order status updates because of notifications.
+                pass

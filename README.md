@@ -1,4 +1,4 @@
-# Shikela Backend
+﻿# Shikela Backend
 Shikela is a scalable multi-vendor e-commerce backend built with Django REST Framework.
 
 This README shows how to integrate with all available backend features (all URLs exposed in `core/core/urls.py`).
@@ -409,6 +409,7 @@ curl -X GET http://127.0.0.1:8000/order/cart/items/ \
 Request fields:
 - `delivery_address` (string, required)
 - `payment_method` (string, required)
+- `delivery_method` (enum: `courier`|`seller`, optional, default `courier`)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/order/cart/checkout/ \
@@ -416,7 +417,8 @@ curl -X POST http://127.0.0.1:8000/order/cart/checkout/ \
   -H "Content-Type: application/json" \
   -d '{
     "delivery_address": "123 Main St",
-    "payment_method": "santimpay"
+    "payment_method": "santimpay",
+    "delivery_method": "courier"
   }'
 ```
 
@@ -429,6 +431,7 @@ Request fields:
 - `quantity` (integer, optional, default 1)
 - `delivery_address` (string, required)
 - `payment_method` (string, required)
+- `delivery_method` (enum: `courier`|`seller`, optional, default `courier`)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/order/create/ \
@@ -440,7 +443,8 @@ curl -X POST http://127.0.0.1:8000/order/create/ \
     "variant_id": "<variant_id>",
     "quantity": 1,
     "delivery_address": "123 Main St",
-    "payment_method": "santimpay"
+    "payment_method": "santimpay",
+    "delivery_method": "seller"
   }'
 ```
 
@@ -448,6 +452,26 @@ curl -X POST http://127.0.0.1:8000/order/create/ \
 ```bash
 curl -X GET http://127.0.0.1:8000/order/orders/ \
   -H "Authorization: Bearer <access_token>"
+```
+
+**Shop Owner: Update Delivery Method**
+`PATCH /order/orders/<order_id>/delivery-method/`
+
+Request fields:
+- `delivery_method` (enum: `courier`|`seller`, required)
+
+Notes:
+- Only the shop owner of that order can update it.
+- It cannot be changed after shipment creation or terminal statuses.
+
+Example:
+```bash
+curl -X PATCH http://127.0.0.1:8000/order/orders/<order_id>/delivery-method/ \
+  -H "Authorization: Bearer <shop_owner_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "delivery_method": "seller"
+  }'
 ```
 
 ## Payments (SantimPay)
@@ -534,7 +558,8 @@ curl -X POST http://127.0.0.1:8000/payment/refunds/<refund_id>/execute/ \
 ## Logistics (Courier)
 Base path: `/logistics/`
 
-Shipment records are created automatically after successful payment webhook sync.
+Shipment records are created automatically after successful payment webhook sync only for orders with `delivery_method = courier`.
+Orders with `delivery_method = seller` are fulfilled by the seller and do not create courier shipments.
 
 **Courier Webhook**
 Endpoint used by courier partner systems to update shipment tracking state.
@@ -668,6 +693,66 @@ curl -X GET "http://127.0.0.1:8000/supliers/alerts/low-stock/?threshold=5" \
 ## Inventory
 Inventory models and services exist, but no API endpoints are currently exposed (`core/inventory/urls.py` is empty).
 
+## Notifications (FCM + In-App)
+Base path: `/api/notifications/`
+
+### Configuration
+Set these in environment:
+- `FCM_PROJECT_ID`
+- `FCM_SERVICE_ACCOUNT_FILE` (path to Firebase service account JSON) or `FCM_SERVICE_ACCOUNT_JSON` (raw JSON string)
+
+Install dependency:
+`firebase-admin`
+
+### Device Token APIs
+**Register or update token (JWT required)**
+`POST /api/notifications/device-token/`
+
+Request fields:
+- `token` (string, required, globally unique)
+- `device_type` (enum: `web` | `android`, required)
+
+**Deactivate token(s) (JWT required)**
+`DELETE /api/notifications/device-token/`
+
+Request fields:
+- `token` (string, optional). If omitted, all active tokens of current user are deactivated.
+
+### Notification Read APIs
+**List notifications (paginated)**
+`GET /api/notifications/`
+
+**Mark one read**
+`PATCH /api/notifications/{id}/read/`
+
+**Mark all read**
+`POST /api/notifications/mark-all-read/`
+
+### Trigger Events Implemented
+- Customer:
+  - `payment_success`
+  - `order_shipped`
+  - `order_delivered`
+- Shop Owner:
+  - `new_order`
+  - `payment_confirmed`
+- Supplier:
+  - `product_sold`
+- Marketer:
+  - `commission_created`
+  - `commission_approved`
+
+### Payload Standard
+All notifications include payload with:
+- `type`
+- `entity_id`
+- `entity_type` (`order` or `commission`)
+
+Optional:
+- `order_id`
+- `commission_id`
+- `product_id`
+
 ## Marketer System
 Base path: `/marketer/`
 
@@ -786,13 +871,13 @@ Attach JWT:
 3. Shop owner imports supplier product into their shop (`/catalog/products/<id>/import/`).
 4. Customer adds to cart and checks out to create an order.
 5. Customer initiates payment (`/payment/direct/`).
-6. SantimPay webhook updates order/payment status and creates shipment.
+6. SantimPay webhook updates order/payment status and creates shipment for orders using `delivery_method = courier`.
 7. Courier webhook updates shipment and order delivery status (`/logistics/webhook/<courier>/`).
 
 **3) Basic Frontend Data Screens**
 Use these endpoints as your first screens:
 1. Shop list: `GET /shops/`
-2. Product list: `GET /catalog/products/` (your frontend can filter client‑side)
+2. Product list: `GET /catalog/products/` (your frontend can filter client-side)
 3. Product detail: `GET /catalog/products/<id>/`
 4. Cart: `GET /order/cart/items/`
 5. Orders: `GET /order/orders/`
@@ -816,7 +901,8 @@ curl -X POST http://127.0.0.1:8000/order/cart/checkout/ \
   -H "Content-Type: application/json" \
   -d '{
     "delivery_address": "123 Main St",
-    "payment_method": "santimpay"
+    "payment_method": "santimpay",
+    "delivery_method": "courier"
   }'
 
 # pay order
@@ -835,3 +921,5 @@ curl -X POST http://127.0.0.1:8000/payment/direct/ \
 1. Refund approvals: `POST /payment/refunds/<id>/approve/`
 2. Refund execute: `POST /payment/refunds/<id>/execute/`
 3. Payout history: `GET /payment/payouts/history/`
+
+

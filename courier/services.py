@@ -9,6 +9,7 @@ from django.db import transaction
 
 from account.badge_logic import resolve_badge
 from order.models import Order
+from notifications.services import NotificationService, NotificationTemplates
 
 from .models import CourierPartner, Shipment
 
@@ -162,10 +163,33 @@ def update_shipment_status(shipment: Shipment, new_status: str, payload: Optiona
         if order.status != Order.Status.DELIVERED:
             order.status = Order.Status.SHIPPED if new_status == Shipment.Status.OUT_FOR_DELIVERY else Order.Status.PROCESSING
             order.save(update_fields=["status", "updated_at"])
+            if order.status == Order.Status.SHIPPED:
+                try:
+                    title, message, payload = NotificationTemplates.order_shipped(order)
+                    NotificationService.notify(
+                        user=order.user,
+                        notification_type="order_shipped",
+                        title=title,
+                        message=message,
+                        payload=payload,
+                    )
+                except Exception:
+                    pass
     elif new_status == Shipment.Status.DELIVERED:
         if order.status != Order.Status.DELIVERED:
             order.status = Order.Status.DELIVERED
             order.save(update_fields=["status", "updated_at"])
+            try:
+                title, message, payload = NotificationTemplates.order_delivered(order)
+                NotificationService.notify(
+                    user=order.user,
+                    notification_type="order_delivered",
+                    title=title,
+                    message=message,
+                    payload=payload,
+                )
+            except Exception:
+                pass
         # Badge refresh on successful delivery completion
         resolve_badge(order.user, persist=True)
         resolve_badge(order.shop.owner, persist=True)

@@ -21,7 +21,6 @@ from .serializers import (
 )
 from django.shortcuts import get_object_or_404
 
-from inventory.services import StockManager
 from courier.services import create_shipment_for_order, LogisticsError
 from order.models import Order
 from payment.models import Earning, Payment, PayoutRequest, Refund, WebhookLog
@@ -32,6 +31,7 @@ from payment.services.service import (
     PaymentServiceError,
 )
 from marketer.services import MarketerCommissionService
+from notifications.services import NotificationService, NotificationTemplates
 
 
 def _get_order_merchant_id(order: Order) -> str:
@@ -268,21 +268,6 @@ class PayoutHistoryView(APIView):
 
 logger = logging.getLogger(__name__)
 
-
-def _apply_stock_for_paid_order(order: Order) -> None:
-    for item in order.items.select_related("variant").all():
-        if not item.variant:
-            continue
-        StockManager.allocate_order(item.variant, item.quantity)
-        StockManager.confirm_order(item.variant, item.quantity)
-
-
-def _apply_stock_for_cancelled_order(order: Order) -> None:
-    for item in order.items.select_related("variant").all():
-        if not item.variant:
-            continue
-        StockManager.release_order(item.variant, item.quantity)
-
 @method_decorator(csrf_exempt, name="dispatch")
 class SantimPayWebhookView(View):
     """
@@ -352,15 +337,62 @@ class SantimPayWebhookView(View):
                     payment.refresh_from_db(fields=["status", "metadata"])
 
                     if previous_order_status != Order.Status.PAID and order.status == Order.Status.PAID:
-                        _apply_stock_for_paid_order(order)
-                        service.record_settlement_earnings(payment)
-                        MarketerCommissionService.create_pending_for_order(order)
+                        created_commissions = MarketerCommissionService.create_pending_for_order(order)
                         try:
-                            create_shipment_for_order(order)
-                        except LogisticsError:
-                            logger.exception("Shipment creation failed for order=%s", order.id)
-                    elif previous_order_status != Order.Status.CANCELLED and order.status == Order.Status.CANCELLED:
-                        _apply_stock_for_cancelled_order(order)
+                            title, message, payload = NotificationTemplates.payment_success(order)
+                            NotificationService.notify(
+                                user=order.user,
+                                notification_type="payment_success",
+                                title=title,
+                                message=message,
+                                payload=payload,
+                            )
+                        except Exception:
+                            logger.exception("Failed to send payment_success notification order=%s", order.id)
+                        try:
+                            title, message, payload = NotificationTemplates.payment_confirmed(order)
+                            NotificationService.notify(
+                                user=order.shop.owner,
+                                notification_type="payment_confirmed",
+                                title=title,
+                                message=message,
+                                payload=payload,
+                            )
+                        except Exception:
+                            logger.exception("Failed to send payment_confirmed notification order=%s", order.id)
+                        try:
+                            for item in order.items.select_related("product__supplier", "variant__product__supplier").all():
+                                product = item.product if item.product else (item.variant.product if item.variant else None)
+                                supplier = getattr(product, "supplier", None) if product else None
+                                if not supplier:
+                                    continue
+                                title, message, payload = NotificationTemplates.product_sold(order, product)
+                                NotificationService.notify(
+                                    user=supplier,
+                                    notification_type="product_sold",
+                                    title=title,
+                                    message=message,
+                                    payload=payload,
+                                )
+                        except Exception:
+                            logger.exception("Failed to send supplier product_sold notifications order=%s", order.id)
+                        try:
+                            for commission in created_commissions:
+                                title, message, payload = NotificationTemplates.commission_created(order, commission)
+                                NotificationService.notify(
+                                    user=commission.contract.marketer,
+                                    notification_type="commission_created",
+                                    title=title,
+                                    message=message,
+                                    payload=payload,
+                                )
+                        except Exception:
+                            logger.exception("Failed to send commission_created notifications order=%s", order.id)
+                        if order.delivery_method == Order.DeliveryMethod.COURIER:
+                            try:
+                                create_shipment_for_order(order)
+                            except LogisticsError:
+                                logger.exception("Shipment creation failed for order=%s", order.id)
                 webhook_log.processed = True
                 webhook_log.save(update_fields=["event_type", "processed"])
                 logger.info("Payment synced successfully: tx_id=%s", tx_id)
