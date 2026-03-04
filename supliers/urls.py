@@ -1,7 +1,7 @@
 from django.urls import path
 
+from analytics.api import SupplierAnalyticsDashboardView
 from .views import (
-    SupplierDashboardView,
     SupplierLowStockAlertView,
     SupplierProductDetailView,
     SupplierProductListCreateView,
@@ -12,7 +12,7 @@ from .views import (
 
 
 urlpatterns = [
-    path("dashboard/", SupplierDashboardView.as_view(), name="supplier-dashboard"),
+    path("dashboard/", SupplierAnalyticsDashboardView.as_view(), name="supplier-dashboard"),
     path("products/", SupplierProductListCreateView.as_view(), name="supplier-products"),
     path("products/<uuid:pk>/", SupplierProductDetailView.as_view(), name="supplier-product-detail"),
     path("products/<uuid:pk>/variants/", SupplierProductVariantCreateView.as_view(), name="supplier-product-variants"),
@@ -20,4 +20,3 @@ urlpatterns = [
     path("variants/<uuid:pk>/stock/", SupplierVariantStockUpdateView.as_view(), name="supplier-variant-stock"),
     path("alerts/low-stock/", SupplierLowStockAlertView.as_view(), name="supplier-low-stock-alert"),
 ]
-

@@ -55,11 +55,14 @@ curl -X POST http://127.0.0.1:8000/auth/login/ \
   }'
 ```
 
+Notes:
+- The refresh token is returned as an `HttpOnly` cookie named `refresh_token`.
+- The response body only contains the access token.
+
 **Refresh Token**
 ```bash
 curl -X POST http://127.0.0.1:8000/auth/refresh/ \
-  -H "Content-Type: application/json" \
-  -d '{"refresh":"<refresh_token>"}'
+  -H "Content-Type: application/json"
 ```
 
 **Get/Update/Delete User**
@@ -118,6 +121,65 @@ curl -X POST http://127.0.0.1:8000/auth/register-supplier/ \
     "company_name": "Supplier Co"
   }'
 ```
+
+## Analytics
+Base path: `/analytics/`
+
+All analytics endpoints require JWT authentication. Access depends on the user's role.
+
+**Shop Owner Dashboard** (role: `SHOP_OWNER`)
+```bash
+curl -X GET http://127.0.0.1:8000/analytics/shop/dashboard/ \
+  -H "Authorization: Bearer <access_token>"
+```
+Response fields:
+- `total_revenue` (string decimal)
+- `this_month_revenue` (string decimal)
+- `orders_count` (number)
+- `units_sold` (number)
+- `refund_amount` (string decimal)
+- `commission_paid` (string decimal)
+- `platform_fee` (string decimal)
+- `today_orders` (number)
+- `last_7_days` (array of `{date, revenue}`)
+
+**Supplier Dashboard** (role: `SUPPLIER`)
+```bash
+curl -X GET http://127.0.0.1:8000/analytics/supplier/dashboard/ \
+  -H "Authorization: Bearer <access_token>"
+```
+Response fields:
+- `total_revenue` (string decimal)
+- `this_month_revenue` (string decimal)
+- `units_sold` (number)
+- `orders_count` (number)
+- `pending_payout` (string decimal)
+- `last_7_days` (array of `{date, revenue}`)
+
+**Marketer Dashboard** (role: `MARKETER`)
+```bash
+curl -X GET http://127.0.0.1:8000/analytics/marketer/dashboard/ \
+  -H "Authorization: Bearer <access_token>"
+```
+Response fields:
+- `total_revenue_generated` (string decimal)
+- `commission_earned` (string decimal)
+- `this_month_revenue` (string decimal)
+- `orders_count` (number)
+- `pending_commissions` (string decimal)
+- `last_7_days` (array of `{date, revenue}`)
+
+**Admin Dashboard** (role: admin)
+```bash
+curl -X GET http://127.0.0.1:8000/analytics/admin/dashboard/ \
+  -H "Authorization: Bearer <admin_access_token>"
+```
+Response fields:
+- `total_gmv` (string decimal)
+- `this_month_gmv` (string decimal)
+- `total_platform_fee` (string decimal)
+- `total_orders` (number)
+- `last_7_days` (array of `{date, gmv}`)
 
 **Register Courier**
 Request fields:

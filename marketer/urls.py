@@ -1,7 +1,7 @@
 from django.urls import path
 
+from analytics.api import MarketerAnalyticsDashboardView
 from .views import (
-    MarketerDashboardView,
     MarketerContractListCreateView,
     MarketerContractDetailView,
     MarketerContractActivateView,
@@ -13,7 +13,7 @@ from .views import (
 
 
 urlpatterns = [
-    path("dashboard/", MarketerDashboardView.as_view(), name="marketer-dashboard"),
+    path("dashboard/", MarketerAnalyticsDashboardView.as_view(), name="marketer-dashboard"),
     path("contracts/", MarketerContractListCreateView.as_view(), name="marketer-contracts"),
     path("contracts/<uuid:pk>/", MarketerContractDetailView.as_view(), name="marketer-contract-detail"),
     path("contracts/<uuid:pk>/activate/", MarketerContractActivateView.as_view(), name="marketer-contract-activate"),

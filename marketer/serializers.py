@@ -60,6 +60,11 @@ class MarketerContractSerializer(serializers.ModelSerializer):
         commission_rate = attrs.get("commission_rate")
         if commission_rate is not None and Decimal(str(commission_rate)) < Decimal("0"):
             raise serializers.ValidationError("commission_rate must be >= 0")
+        if self.instance is None:
+            shop = attrs.get("shop")
+            marketer = attrs.get("marketer")
+            if shop and marketer and MarketerContract.objects.filter(shop=shop, marketer=marketer).exists():
+                raise serializers.ValidationError("Contract already exists for this shop and marketer.")
         return attrs
 
     def create(self, validated_data):

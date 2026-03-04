@@ -22,6 +22,13 @@ def _approve_commissions_on_delivery(sender, instance: Order, **kwargs):
         return
     if instance.status == Order.Status.DELIVERED:
         commissions = MarketerCommissionService.approve_for_order(instance)
+        if commissions:
+            try:
+                from analytics.services import AnalyticsService
+
+                AnalyticsService.handle_commission_approved(commissions)
+            except Exception:
+                pass
         for commission in commissions:
             try:
                 title, message, payload = NotificationTemplates.commission_approved(instance, commission)

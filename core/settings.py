@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     'supliers',
     'marketer.apps.MarketerConfig',
     'notifications',
+    'analytics',
 
 ]
 

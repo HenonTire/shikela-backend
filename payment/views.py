@@ -32,6 +32,7 @@ from payment.services.service import (
 )
 from marketer.services import MarketerCommissionService
 from notifications.services import NotificationService, NotificationTemplates
+from analytics.services import AnalyticsService
 
 
 def _get_order_merchant_id(order: Order) -> str:
@@ -179,6 +180,10 @@ class RefundApproveView(APIView):
             return Response({"detail": "Only requested refunds can be approved"}, status=status.HTTP_400_BAD_REQUEST)
         refund.status = Refund.Status.APPROVED
         refund.save(update_fields=["status", "updated_at"])
+        try:
+            AnalyticsService.handle_refund_approved(refund)
+        except Exception:
+            logger.exception("Failed to update analytics for refund=%s", refund.id)
         return Response(RefundSerializer(refund).data)
 
 
@@ -338,6 +343,10 @@ class SantimPayWebhookView(View):
 
                     if previous_order_status != Order.Status.PAID and order.status == Order.Status.PAID:
                         created_commissions = MarketerCommissionService.create_pending_for_order(order)
+                        try:
+                            AnalyticsService.handle_payment_success(order)
+                        except Exception:
+                            logger.exception("Failed to update analytics for order=%s", order.id)
                         try:
                             title, message, payload = NotificationTemplates.payment_success(order)
                             NotificationService.notify(

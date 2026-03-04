@@ -68,6 +68,8 @@ class ShopSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context["request"]
+        if getattr(request.user, "owned_shop", None):
+            raise serializers.ValidationError("Shop owner already has a shop.")
 
         # Remove marketers before create
         marketers = validated_data.pop("marketer", [])

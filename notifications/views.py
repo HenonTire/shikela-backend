@@ -61,6 +61,9 @@ class NotificationReadView(APIView):
             notification.save(update_fields=["is_read"])
         return Response({"id": str(notification.id), "is_read": notification.is_read})
 
+    def post(self, request, pk):
+        return self.patch(request, pk)
+
 
 class NotificationMarkAllReadView(APIView):
     permission_classes = [permissions.IsAuthenticated]

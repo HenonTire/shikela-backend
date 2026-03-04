@@ -94,11 +94,15 @@ class PaymentMethodSerializer(ModelSerializer):
         payment_type = attrs.get("payment_type")
         account_number = attrs.get("account_number")
         phone_number = attrs.get("phone_number")
+        user = self.context["request"].user
 
         if payment_type == "BANK" and not account_number:
             raise serializers.ValidationError({"account_number": "Bank account number is required."})
         elif payment_type in ["TELEBIRR", "MPESA"] and not phone_number:
             raise serializers.ValidationError({"phone_number": "Phone number is required for this payment type."})
+
+        if PaymentMethod.objects.filter(shop_owner=user, payment_type=payment_type).exists():
+            raise serializers.ValidationError({"payment_type": "Payment method already exists for this user."})
         
         return attrs
     def create(self, validated_data):
@@ -144,3 +148,51 @@ class MarketerSerializer(MerchantIdRepresentationMixin, ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ('id', 'created_at', 'updated_at')
+
+
+class MarketerRegisterSerializer(MerchantIdRepresentationMixin, ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "company_name",
+            "avatar",
+            "email",
+            "merchant_id",
+            "phone_number",
+            "bio",
+            "base_price",
+            "marketer_commission",
+            "followers_count",
+            "instagram",
+            "marketer_type",
+            "pricing_type",
+            "rating",
+            "badge",
+            "services",
+            "team_size",
+            "tiktok",
+            "total_jobs",
+            "website",
+            "youtube",
+            "password",
+            "created_at",
+            "updated_at",
+        ]
+        extra_kwargs = {
+            "password": {"write_only": True},
+        }
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        if not validated_data.get("marketer_type"):
+            validated_data["marketer_type"] = "CREATOR"
+        user = super().create(validated_data)
+        if password:
+            user.set_password(password)
+            user.role = "MARKETER"
+            user.save(update_fields=["password", "role", "updated_at"])
+        return user
