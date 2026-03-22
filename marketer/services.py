@@ -1,4 +1,4 @@
-afrom decimal import Decimal
+from decimal import Decimal
 
 from django.utils import timezone
 
