@@ -14,13 +14,11 @@ class SupplierAPITests(TestCase):
             email="supplier@example.com",
             password="Pass123!",
             role="SUPPLIER",
-            marketer_type="CREATOR",
         )
         self.customer = User.objects.create_user(
             email="customer@example.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
 
     def test_supplier_can_create_product_with_supplier_fields(self):
@@ -107,3 +105,4 @@ class SupplierAPITests(TestCase):
         self.assertIn("pending_payout", response.data)
         self.assertIn("this_month_revenue", response.data)
         self.assertEqual(len(response.data["cards"]), 5)
+

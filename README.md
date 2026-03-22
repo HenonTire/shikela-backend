@@ -1,4 +1,4 @@
-﻿# Shikela Backend
+# Shikela Backend
 Shikela is a scalable multi-vendor e-commerce backend built with Django REST Framework.
 
 This README shows how to integrate with all available backend features (all URLs exposed in `core/core/urls.py`).
@@ -19,6 +19,14 @@ Example header:
 3. Configure Django settings and run migrations.
 4. Start the server and use the examples below.
 
+## Recent Updates (March 6-7, 2026)
+- Removed `merchant_id` from `account.User` and all account registration APIs.
+- Payments now use a single platform merchant ID from settings (`SANTIMPAY_MERCHANT_ID`, fallback `PLATFORM_MERCHANT_ID`).
+- Payouts also use the same platform merchant ID for all payout operations.
+- Earnings are stored in `payment.Earning` and payout amount is calculated from each user's `AVAILABLE` earnings total.
+- Shop theme settings endpoint now supports `GET` and `PATCH` on `/shops/theme-settings/` (settings are auto-created with shop creation).
+- Inventory API is now exposed under `/inventory/` with locations, items, actions, and stock movements endpoints.
+
 ## Authentication & Users
 Base path: `/auth/`
 
@@ -29,7 +37,6 @@ Request fields:
 - `first_name` (string, optional)
 - `last_name` (string, optional)
 - `phone_number` (string, optional)
-- `merchant_id` (string, optional)
 - `location` (string, optional)
 - `badge` (string, optional)
 
@@ -77,7 +84,6 @@ Request fields:
 - `last_name` (string, optional)
 - `email` (string, required)
 - `password` (string, required)
-- `merchant_id` (string, optional)
 - `phone_number` (string, optional)
 - `avatar` (file, optional)
 - `license_document` (file, optional)
@@ -89,9 +95,7 @@ curl -X POST http://127.0.0.1:8000/auth/register-shop-owner/ \
     "email": "owner@example.com",
     "password": "StrongPass123!",
     "first_name": "Shop",
-    "last_name": "Owner",
-    "role": "SHOP_OWNER",
-    "merchant_id": "your-santimpay-merchant-id"
+    "last_name": "Owner"
   }'
 ```
 
@@ -100,7 +104,6 @@ Request fields:
 - `company_name` (string, optional)
 - `email` (string, required)
 - `password` (string, required)
-- `merchant_id` (string, optional)
 - `phone_number` (string, optional)
 - `location` (string, optional)
 - `avatar` (file, optional)
@@ -156,9 +159,7 @@ Response fields:
 - `pending_payout` (string decimal)
 - `last_7_days` (array of `{date, revenue}`)
 
-**Marketer Dashboard** (role: `MARKETER`)
 ```bash
-curl -X GET http://127.0.0.1:8000/analytics/marketer/dashboard/ \
   -H "Authorization: Bearer <access_token>"
 ```
 Response fields:
@@ -186,7 +187,6 @@ Request fields:
 - `company_name` (string, optional)
 - `email` (string, required)
 - `password` (string, required)
-- `merchant_id` (string, optional)
 - `phone_number` (string, optional)
 - `location` (string, optional)
 - `avatar` (file, optional)
@@ -206,21 +206,17 @@ curl -X POST http://127.0.0.1:8000/auth/register-courier/ \
   }'
 ```
 
-**Register Marketer**
 Request fields:
 - `first_name` (string, optional)
 - `last_name` (string, optional)
 - `company_name` (string, optional)
 - `avatar` (file, optional)
 - `email` (string, required)
-- `merchant_id` (string, optional)
 - `phone_number` (string, optional)
 - `bio` (string, optional)
 - `base_price` (decimal, optional)
-- `marketer_commission` (decimal, optional)
 - `followers_count` (integer, optional)
 - `instagram` (url, optional)
-- `marketer_type` (enum: `CREATOR`|`AGENCY`, required)
 - `pricing_type` (enum: `PER_POST`|`PER_CAMPAIGN`|`MONTHLY`, optional)
 - `services` (enum string, optional)
 - `team_size` (integer, optional)
@@ -229,17 +225,12 @@ Request fields:
 - `youtube` (url, optional)
 
 ```bash
-curl -X POST http://127.0.0.1:8000/auth/register-marketer/ \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "marketer@example.com",
     "password": "StrongPass123!",
     "first_name": "Growth",
     "last_name": "Lead",
-    "role": "MARKETER",
-    "marketer_type": "CREATOR",
     "instagram": "https://instagram.com/creator",
-    "marketer_commission": "10.00"
   }'
 ```
 
@@ -268,7 +259,6 @@ Request fields:
 - `description` (string, optional)
 - `domain` (string, optional)
 - `theme_id` (uuid, optional)
-- `marketer_ids` (list of marketer UUIDs, optional)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/shops/ \
@@ -298,24 +288,22 @@ Request fields:
 - `name` (string, required)
 - `slug` (string, required)
 - `description` (string, optional)
-- `preview_image` (file, optional)
+- `preview_image` (file, required)
 - `version` (string, required)
 - `is_active` (boolean, optional)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/shops/themes/ \
   -H "Authorization: Bearer <access_token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Classic",
-    "slug": "classic",
-    "description": "Classic layout",
-    "version": "1.0.0",
-    "is_active": true
-  }'
+  -F "name=Classic" \
+  -F "slug=classic" \
+  -F "description=Classic layout" \
+  -F "version=1.0.0" \
+  -F "is_active=true" \
+  -F "preview_image=@/path/to/theme-preview.png"
 ```
 
-**Create Theme Settings**
+**Theme Settings**
 Request fields:
 - `primary_color` (string, optional)
 - `secondary_color` (string, optional)
@@ -323,15 +311,29 @@ Request fields:
 - `banner_image` (file, optional)
 - `font_family` (string, optional)
 
+`POST /shops/theme-settings/` creates settings once (if missing).
+`GET /shops/theme-settings/` returns current settings.
+`PATCH /shops/theme-settings/` updates existing settings.
+
 ```bash
 curl -X POST http://127.0.0.1:8000/shops/theme-settings/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "shop": "<shop_id>",
     "primary_color": "#111111",
     "secondary_color": "#ffffff",
     "font_family": "Arial"
+  }'
+```
+
+```bash
+curl -X PATCH http://127.0.0.1:8000/shops/theme-settings/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "primary_color": "#1D4ED8",
+    "secondary_color": "#F8FAFC",
+    "font_family": "Poppins"
   }'
 ```
 
@@ -446,7 +448,6 @@ Request fields:
 - `shop_id` (uuid, required)
 - `product_id` (uuid, required)
 - `variant_id` (uuid, optional)
-- `marketer_contract_id` (uuid, optional)
 - `quantity` (integer >= 1, required)
 
 ```bash
@@ -489,7 +490,6 @@ Request fields:
 - `shop_id` (uuid, required)
 - `product_id` (uuid, required)
 - `variant_id` (uuid, optional)
-- `marketer_contract_id` (uuid, optional)
 - `quantity` (integer, optional, default 1)
 - `delivery_address` (string, required)
 - `payment_method` (string, required)
@@ -545,6 +545,10 @@ Set these in Django `settings.py` or environment variables:
 `SANTIMPAY_SUCCESS_REDIRECT_URL`, `SANTIMPAY_FAILURE_REDIRECT_URL`,
 `SANTIMPAY_NOTIFY_URL`
 
+Notes:
+- One platform merchant ID is used for all incoming payments and all outgoing payouts.
+- Per-user `merchant_id` is no longer used.
+
 **Direct Payment**
 Request fields:
 - `order_id` (uuid, required)
@@ -579,8 +583,13 @@ Request fields:
 curl -X POST http://127.0.0.1:8000/payment/payouts/request/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{"confirm": true}'
 ```
+
+How payout amount is calculated:
+- System sums `payment.Earning` rows where `user=<request.user>` and `status=AVAILABLE`.
+- That total is paid out in one request.
+- On success, those earnings are marked `PAID_OUT`.
 
 **Payout History**
 ```bash
@@ -599,7 +608,7 @@ curl -X POST http://127.0.0.1:8000/payment/refunds/request/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "payment": "<payment_id>",
+    "payment_id": "<payment_id>",
     "amount": "10.00",
     "reason": "Customer returned item"
   }'
@@ -753,7 +762,104 @@ curl -X GET "http://127.0.0.1:8000/supliers/alerts/low-stock/?threshold=5" \
 ```
 
 ## Inventory
-Inventory models and services exist, but no API endpoints are currently exposed (`core/inventory/urls.py` is empty).
+Base path: `/inventory/`
+
+All inventory endpoints require JWT authentication.
+
+**Locations**
+```bash
+# list
+curl -X GET http://127.0.0.1:8000/inventory/locations/ \
+  -H "Authorization: Bearer <access_token>"
+
+# create
+curl -X POST http://127.0.0.1:8000/inventory/locations/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Main WH",
+    "type": "WAREHOUSE",
+    "contact": {"phone":"+251900000000"}
+  }'
+```
+
+`GET/PATCH/DELETE /inventory/locations/<id>/`
+
+**Inventory Items**
+```bash
+# list
+curl -X GET http://127.0.0.1:8000/inventory/items/ \
+  -H "Authorization: Bearer <access_token>"
+
+# create
+curl -X POST http://127.0.0.1:8000/inventory/items/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "variant_id": "<variant_id>",
+    "location_id": 1,
+    "quantity_available": 20,
+    "quantity_reserved": 0
+  }'
+```
+
+`GET/PATCH/DELETE /inventory/items/<id>/`
+
+**Inventory Actions**
+Endpoint: `POST /inventory/items/<id>/actions/`
+
+Request fields:
+- `action` (`reserve` | `release` | `confirm` | `adjust`)
+- `quantity` (integer >= 1)
+- `reason` (string, optional)
+
+Examples:
+```bash
+curl -X POST http://127.0.0.1:8000/inventory/items/1/actions/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"reserve","quantity":5,"reason":"Order Reserved"}'
+
+curl -X POST http://127.0.0.1:8000/inventory/items/1/actions/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"release","quantity":2,"reason":"Order Released"}'
+
+curl -X POST http://127.0.0.1:8000/inventory/items/1/actions/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"confirm","quantity":2,"reason":"Order Confirmed"}'
+
+curl -X POST http://127.0.0.1:8000/inventory/items/1/actions/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"adjust","quantity":3,"reason":"Manual stock in"}'
+```
+
+**Stock Movements**
+```bash
+# list all movements
+curl -X GET http://127.0.0.1:8000/inventory/movements/ \
+  -H "Authorization: Bearer <access_token>"
+
+# filter by inventory id
+curl -X GET "http://127.0.0.1:8000/inventory/movements/?inventory=1" \
+  -H "Authorization: Bearer <access_token>"
+
+# create movement (this also adjusts inventory quantity)
+curl -X POST http://127.0.0.1:8000/inventory/movements/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"inventory_id":1,"quantity":-1,"reason":"Shrinkage"}'
+```
+
+**Flow Summary**
+1. Create location.
+2. Create inventory item for a product variant.
+3. Reserve stock when order is allocated.
+4. Release stock if order is cancelled/rolled back.
+5. Confirm stock when order is completed.
+6. Review stock movement history for audit.
 
 ## Notifications (FCM + In-App)
 Base path: `/api/notifications/`
@@ -800,7 +906,6 @@ Request fields:
   - `payment_confirmed`
 - Supplier:
   - `product_sold`
-- Marketer:
   - `commission_created`
   - `commission_approved`
 
@@ -815,42 +920,30 @@ Optional:
 - `commission_id`
 - `product_id`
 
-## Marketer System
-Base path: `/marketer/`
 
 ### New Features Added
-- Contract-based marketer relationships with shop owners.
-- Product-scoped contracts (marketers can only earn on assigned products).
 - Commission lifecycle: `PENDING` on payment, `APPROVED` on delivery.
-- Marketer dashboard with earnings, pending commissions, orders influenced, units sold, active contracts.
 - Shop owner control to activate, pause, resume, or end contracts.
-- Order/cart support for `marketer_contract_id` to attribute sales.
 
 ### How It Works (Flow)
-1. **Create contract**: shop owner or marketer creates a contract for a shop + marketer + product list.
 2. **Activate contract**: shop owner activates it (only active contracts earn).
-3. **Customer purchase**: frontend sends `marketer_contract_id` when adding to cart or buying now.
 4. **Payment confirmed**: when order status becomes `PAID`, commission rows are created as `PENDING`.
 5. **Delivery confirmed**: when order status becomes `DELIVERED`, commissions become `APPROVED`.
-6. **Dashboards**: marketers and shop owners see totals, pending, and performance.
 
 ### Contracts
 **Create Contract**
 Request fields:
 - `shop_id` (uuid, required)
-- `marketer_id` (uuid, required)
 - `commission_rate` (decimal percent, optional)
 - `start_date` (date, optional)
 - `end_date` (date, optional)
 - `product_ids` (list of product UUIDs, optional)
 
 ```bash
-curl -X POST http://127.0.0.1:8000/marketer/contracts/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
     "shop_id": "<shop_id>",
-    "marketer_id": "<marketer_id>",
     "commission_rate": "10.00",
     "product_ids": ["<product_id_1>", "<product_id_2>"]
   }'
@@ -858,7 +951,6 @@ curl -X POST http://127.0.0.1:8000/marketer/contracts/ \
 
 **Update Contract (dates, rate, products)**
 ```bash
-curl -X PATCH http://127.0.0.1:8000/marketer/contracts/<contract_id>/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -869,33 +961,25 @@ curl -X PATCH http://127.0.0.1:8000/marketer/contracts/<contract_id>/ \
 
 **Contract Status Actions (Shop Owner)**
 ```bash
-curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/activate/ \
   -H "Authorization: Bearer <access_token>"
 
-curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/pause/ \
   -H "Authorization: Bearer <access_token>"
 
-curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/resume/ \
   -H "Authorization: Bearer <access_token>"
 
-curl -X POST http://127.0.0.1:8000/marketer/contracts/<contract_id>/end/ \
   -H "Authorization: Bearer <access_token>"
 ```
 
 ### Commissions
 **List Commissions**
 ```bash
-curl -X GET http://127.0.0.1:8000/marketer/commissions/ \
   -H "Authorization: Bearer <access_token>"
 ```
 
 Filter by status:
-`/marketer/commissions/?status=pending` or `approved`.
 
 ### Dashboard
-**Marketer/Shop Owner Dashboard**
 ```bash
-curl -X GET http://127.0.0.1:8000/marketer/dashboard/ \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -903,7 +987,6 @@ curl -X GET http://127.0.0.1:8000/marketer/dashboard/ \
 - Contract status must be `ACTIVE`.
 - Commissions are created when payment is confirmed (order status becomes `PAID`).
 - Commissions are approved when order status becomes `DELIVERED`.
-- Marketers only earn on products listed in the contract.
 
 ## Notes
 Some behavior depends on serializers and model constraints in the app code.

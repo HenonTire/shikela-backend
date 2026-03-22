@@ -1,16 +1,13 @@
 from decimal import Decimal
-from typing import Iterable
 
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import F
 from django.utils import timezone
 
-from marketer.models import MarketerCommission, MarketerContractProduct
 from order.models import Order
 from payment.models import Refund
 
 from .models import (
-    MarketerDailyAnalytics,
     PlatformDailyAnalytics,
     ShopDailyAnalytics,
     SupplierDailyAnalytics,
@@ -43,7 +40,6 @@ class AnalyticsService:
             order.items.select_related(
                 "product__supplier",
                 "variant__product__supplier",
-                "marketer_contract",
                 "product",
             ).all()
         )
@@ -97,78 +93,6 @@ class AnalyticsService:
                 updated_at=timezone.now(),
             )
 
-        marketer_revenue = {}
-        marketer_orders = set()
-        for item in items:
-            contract = getattr(item, "marketer_contract", None)
-            if not contract or not contract.is_active():
-                continue
-            product = item.product if item.product else (item.variant.product if item.variant else None)
-            if not product or product.shop_id != contract.shop_id:
-                continue
-            if not MarketerContractProduct.objects.filter(contract=contract, product=product).exists():
-                continue
-            marketer_revenue.setdefault(contract.marketer_id, Decimal("0.00"))
-            marketer_revenue[contract.marketer_id] += _decimal(item.total)
-            marketer_orders.add(contract.marketer_id)
-
-        for marketer_id, revenue_generated in marketer_revenue.items():
-            row = _get_locked_row(
-                MarketerDailyAnalytics,
-                marketer_id=marketer_id,
-                date=today,
-            )
-            MarketerDailyAnalytics.objects.filter(pk=row.pk).update(
-                revenue_generated=F("revenue_generated") + revenue_generated,
-                orders_count=F("orders_count") + (1 if marketer_id in marketer_orders else 0),
-                updated_at=timezone.now(),
-            )
-
-    @staticmethod
-    @transaction.atomic
-    def handle_commission_approved(
-        commissions: Iterable[MarketerCommission] | MarketerCommission,
-    ) -> None:
-        if not commissions:
-            return
-
-        if isinstance(commissions, MarketerCommission):
-            commission_list = [commissions]
-        else:
-            commission_list = list(commissions)
-        if not commission_list:
-            return
-
-        grouped = {}
-        for commission in commission_list:
-            if commission.status != MarketerCommission.Status.APPROVED:
-                continue
-            approved_at = commission.approved_at or timezone.now()
-            date = timezone.localdate(approved_at)
-            key = (commission.contract.marketer_id, date, commission.order.shop_id)
-            grouped.setdefault(
-                key,
-                {"commission": Decimal("0.00"), "order_ids": set()},
-            )
-            grouped[key]["commission"] += _decimal(commission.amount)
-            grouped[key]["order_ids"].add(commission.order_id)
-
-        for (marketer_id, date, shop_id), payload in grouped.items():
-            marketer_row = _get_locked_row(
-                MarketerDailyAnalytics,
-                marketer_id=marketer_id,
-                date=date,
-            )
-            MarketerDailyAnalytics.objects.filter(pk=marketer_row.pk).update(
-                commission_earned=F("commission_earned") + payload["commission"],
-                updated_at=timezone.now(),
-            )
-            shop_row = _get_locked_row(ShopDailyAnalytics, shop_id=shop_id, date=date)
-            ShopDailyAnalytics.objects.filter(pk=shop_row.pk).update(
-                commission_paid=F("commission_paid") + payload["commission"],
-                updated_at=timezone.now(),
-            )
-
     @staticmethod
     @transaction.atomic
     def handle_refund_approved(refund: Refund) -> None:
@@ -180,7 +104,6 @@ class AnalyticsService:
             order.items.select_related(
                 "product__supplier",
                 "variant__product__supplier",
-                "marketer_contract",
                 "product",
             ).all()
         )
@@ -230,52 +153,5 @@ class AnalyticsService:
             )
             SupplierDailyAnalytics.objects.filter(pk=row.pk).update(
                 revenue=F("revenue") - payload["refund"],
-                updated_at=timezone.now(),
-            )
-
-        marketer_rollup = {}
-        for item in items:
-            contract = getattr(item, "marketer_contract", None)
-            if not contract or not contract.is_active():
-                continue
-            product = item.product if item.product else (item.variant.product if item.variant else None)
-            if not product or product.shop_id != contract.shop_id:
-                continue
-            if not MarketerContractProduct.objects.filter(contract=contract, product=product).exists():
-                continue
-            marketer_rollup.setdefault(contract.marketer_id, Decimal("0.00"))
-            marketer_rollup[contract.marketer_id] += _decimal(item.total) * refund_ratio
-
-        for marketer_id, refund_value in marketer_rollup.items():
-            row = _get_locked_row(
-                MarketerDailyAnalytics,
-                marketer_id=marketer_id,
-                date=today,
-            )
-            MarketerDailyAnalytics.objects.filter(pk=row.pk).update(
-                revenue_generated=F("revenue_generated") - refund_value,
-                updated_at=timezone.now(),
-            )
-
-        approved_commissions = (
-            MarketerCommission.objects.filter(order=order, status=MarketerCommission.Status.APPROVED)
-            .values("contract__marketer_id")
-            .annotate(total=Sum("amount"))
-        )
-        for row in approved_commissions:
-            marketer_id = row["contract__marketer_id"]
-            commission_refund = _decimal(row["total"]) * refund_ratio
-            marketer_row = _get_locked_row(
-                MarketerDailyAnalytics,
-                marketer_id=marketer_id,
-                date=today,
-            )
-            MarketerDailyAnalytics.objects.filter(pk=marketer_row.pk).update(
-                commission_earned=F("commission_earned") - commission_refund,
-                updated_at=timezone.now(),
-            )
-            shop_row = _get_locked_row(ShopDailyAnalytics, shop=order.shop, date=today)
-            ShopDailyAnalytics.objects.filter(pk=shop_row.pk).update(
-                commission_paid=F("commission_paid") - commission_refund,
                 updated_at=timezone.now(),
             )

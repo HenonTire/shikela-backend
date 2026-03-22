@@ -138,9 +138,22 @@ def _normalize_pem(value: str) -> str:
     return (value or "").replace("\\n", "\n")
 
 
+# Default to SantimPay testnet unless explicitly opting into production.
 SANTIMPAY_TEST_BED = os.getenv("SANTIMPAY_TEST_BED", "true").lower() in {"1", "true", "yes", "on"}
-SANTIMPAY_MERCHANT_ID = os.getenv("SANTIMPAY_MERCHANT_ID", "")
-SANTIMPAY_PRIVATE_KEY = _normalize_pem(os.getenv("SANTIMPAY_PRIVATE_KEY", ""))
+SANTIMPAY_MERCHANT_ID = os.getenv("SANTIMPAY_MERCHANT_ID", "9e2dab64-e2bb-4837-9b85-d855dd878d2b")
+SANTIMPAY_PRIVATE_KEY = _normalize_pem(
+    os.getenv(
+        "SANTIMPAY_PRIVATE_KEY",
+        """
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIA6End3PsH0SIKGrNSv1Oie2xcubUtIbkiiWO36ZM6JXoAoGCCqGSM49
+AwEHoUQDQgAEPT1BI//IvDUZn3vFBrwSM+Q1CT9KF64XVyMeidH7XSc4bRsszQUf
+FGcp7Hy7iV4Bf9U5MRY8YKpExoThMGfJBw==
+-----END EC PRIVATE KEY-----
+""".strip(),
+    )
+)
+SANTIMPAY_SIGN_TOKEN_URL = os.getenv("SANTIMPAY_SIGN_TOKEN_URL", "")
 SANTIMPAY_SUCCESS_REDIRECT_URL = os.getenv("SANTIMPAY_SUCCESS_REDIRECT_URL", "http://localhost:8000/payment/success")
 SANTIMPAY_FAILURE_REDIRECT_URL = os.getenv("SANTIMPAY_FAILURE_REDIRECT_URL", "http://localhost:8000/payment/failure")
 SANTIMPAY_CANCEL_REDIRECT_URL = os.getenv("SANTIMPAY_CANCEL_REDIRECT_URL", "http://localhost:8000/payment/cancel")

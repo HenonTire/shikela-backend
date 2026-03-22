@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import uuid
+import time
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
@@ -43,6 +44,7 @@ class PaymentService:
     def __init__(self, merchant_id: Optional[str] = None) -> None:
         resolved_merchant_id = self._resolve_merchant_id(merchant_id)
         private_key = self._get_setting("SANTIMPAY_PRIVATE_KEY")
+        # Default to testnet gateway unless explicitly configured for production.
         test_bed = self._get_bool_setting("SANTIMPAY_TEST_BED", default=True)
 
         self.default_success_url = self._get_setting("SANTIMPAY_SUCCESS_REDIRECT_URL", required=False)
@@ -54,6 +56,7 @@ class PaymentService:
             merchant_id=resolved_merchant_id,
             private_key=private_key,
             test_bed=test_bed,
+            sign_token_url=self._get_setting("SANTIMPAY_SIGN_TOKEN_URL", required=False),
         )
 
     # -----------------------------
@@ -154,6 +157,7 @@ class PaymentService:
             raise PaymentServiceError("phone_number is required for direct payment")
         if not payment_method:
             raise PaymentServiceError("payment_method is required for direct payment")
+        normalized_method = self._normalize_payment_method(payment_method)
 
         generated_tx_id = tx_id or self.generate_tx_id()
         return self._call_gateway(
@@ -163,7 +167,7 @@ class PaymentService:
             payment_reason=reason,
             notify_url=notify,
             phone_number=phone_number,
-            payment_method=payment_method,
+            payment_method=normalized_method,
         )
 
     # -----------------------------
@@ -300,15 +304,13 @@ class PaymentService:
         dropshipper_user = payment.order.shop.owner
         supplier_user = self._resolve_supplier_user(payment, settlement)
         platform_user = self._resolve_platform_user()
-        marketer_payouts = self._calculate_marketer_payouts(payment, total_amount)
-        marketer_total = self._money(sum((p["amount"] for p in marketer_payouts), Decimal("0.00")))
 
         dropshipper_amount = self._money(
-            total_amount - commission_amount - supplier_amount - marketer_total
+            total_amount - commission_amount - supplier_amount
         )
         if dropshipper_amount < Decimal("0.00"):
             raise PaymentServiceError(
-                "Invalid split: platform + supplier + marketer payout exceeds payment amount"
+                "Invalid split: platform and supplier payout exceed payment amount"
             )
 
         allocations: Dict[str, Dict[str, Any]] = {}
@@ -333,8 +335,6 @@ class PaymentService:
             raise PaymentServiceError("Supplier payout amount exists but supplier user is not configured")
 
         add_allocation(supplier_user, supplier_amount, "SUPPLIER")
-        for marketer in marketer_payouts:
-            add_allocation(marketer["user"], marketer["amount"], "MARKETER")
         add_allocation(dropshipper_user, dropshipper_amount, "SHOP_OWNER")
         if platform_user:
             add_allocation(platform_user, commission_amount, "PLATFORM")
@@ -358,13 +358,6 @@ class PaymentService:
                 amount=-supplier_amount,
                 description="Supplier payout",
             )
-        for marketer in marketer_payouts:
-            self._ensure_ledger_entry(
-                payment=payment,
-                entry_type=LedgerEntry.EntryType.COMMISSION,
-                amount=-marketer["amount"],
-                description=f"Marketer commission user={marketer['user'].id}",
-            )
         if dropshipper_amount > 0:
             self._ensure_ledger_entry(
                 payment=payment,
@@ -383,7 +376,6 @@ class PaymentService:
             "platform_user_id": str(platform_user.id) if platform_user else None,
             "supplier_user_id": str(supplier_user.id) if supplier_user else None,
             "supplier_amount": str(supplier_amount),
-            "marketer_total": str(marketer_total),
             "dropshipper_user_id": str(dropshipper_user.id),
             "shop_owner_expected_amount": str(shop_owner_expected_amount),
             "dropshipper_amount": str(dropshipper_amount),
@@ -415,7 +407,6 @@ class PaymentService:
                 continue
             roles = alloc.get("roles", [])
             role_value = "/".join(roles) if roles else ""
-            merchant_snapshot = getattr(user, "merchant_id", "") or ""
             Earning.objects.update_or_create(
                 user=user,
                 payment=payment,
@@ -423,7 +414,7 @@ class PaymentService:
                     "order": payment.order,
                     "amount": amount,
                     "role": role_value,
-                    "merchant_id_snapshot": merchant_snapshot,
+                    "merchant_id_snapshot": "",
                     "status": Earning.Status.AVAILABLE,
                     "metadata": {"allocation": alloc},
                 },
@@ -580,7 +571,6 @@ class PaymentService:
         Split a successful payment using marketplace rules:
         - Platform keeps fixed 10%
         - Supplier gets initial product total
-        - Marketer(s) get commission based on DB rate
         - Shop owner gets the remainder
         Idempotent across repeated webhook calls.
         """
@@ -603,20 +593,16 @@ class PaymentService:
         dropshipper_user = payment.order.shop.owner
         supplier_user = self._resolve_supplier_user(payment, settlement)
 
-        marketer_payouts = self._calculate_marketer_payouts(payment, total_amount)
-        marketer_total = self._money(sum((p["amount"] for p in marketer_payouts), Decimal("0.00")))
-
         dropshipper_amount = self._money(
-            total_amount - commission_amount - supplier_amount - marketer_total
+            total_amount - commission_amount - supplier_amount
         )
         if dropshipper_amount < Decimal("0.00"):
             raise PaymentServiceError(
-                "Invalid split: platform + supplier + marketer payout exceeds payment amount"
+                "Invalid split: platform and supplier payout exceed payment amount"
             )
 
         supplier_result: Optional[Dict[str, Any]] = None
         dropshipper_result: Optional[Dict[str, Any]] = None
-        marketer_results: List[Dict[str, Any]] = []
 
         if supplier_amount > 0:
             if not supplier_user:
@@ -626,22 +612,6 @@ class PaymentService:
                 amount=supplier_amount,
                 payment_reason=f"Supplier payout for order {payment.order.order_number}",
                 tx_prefix="SUP",
-            )
-
-        for marketer in marketer_payouts:
-            payout_response = self._pay_user(
-                user=marketer["user"],
-                amount=marketer["amount"],
-                payment_reason=f"Marketer commission for order {payment.order.order_number}",
-                tx_prefix="MKT",
-            )
-            marketer_results.append(
-                {
-                    "user_id": str(marketer["user"].id),
-                    "rate": str(marketer["rate"]),
-                    "amount": str(marketer["amount"]),
-                    "payout_response": payout_response,
-                }
             )
 
         if dropshipper_amount > 0:
@@ -671,13 +641,6 @@ class PaymentService:
                 amount=-supplier_amount,
                 description="Supplier payout",
             )
-        for marketer in marketer_payouts:
-            self._ensure_ledger_entry(
-                payment=payment,
-                entry_type=LedgerEntry.EntryType.COMMISSION,
-                amount=-marketer["amount"],
-                description=f"Marketer commission user={marketer['user'].id}",
-            )
         if dropshipper_amount > 0:
             self._ensure_ledger_entry(
                 payment=payment,
@@ -693,8 +656,6 @@ class PaymentService:
             "commission_amount": str(commission_amount),
             "supplier_user_id": str(supplier_user.id) if supplier_user else None,
             "supplier_amount": str(supplier_amount),
-            "marketer_total": str(marketer_total),
-            "marketer_payouts": marketer_results,
             "dropshipper_user_id": str(dropshipper_user.id),
             "shop_owner_expected_amount": str(shop_owner_expected_amount),
             "dropshipper_amount": str(dropshipper_amount),
@@ -726,6 +687,7 @@ class PaymentService:
             raise PaymentServiceError("phone_number is required for payout")
         if not payment_method:
             raise PaymentServiceError("payment_method is required for payout")
+        normalized_method = self._normalize_payment_method(payment_method)
 
         generated_tx_id = tx_id or self.generate_tx_id()
         return self._call_gateway(
@@ -734,7 +696,7 @@ class PaymentService:
             amount=float(normalized_amount),
             payment_reason=reason,
             phone_number=phone_number,
-            payment_method=payment_method,
+            payment_method=normalized_method,
             notify_url=notify,
         )
 
@@ -761,6 +723,18 @@ class PaymentService:
     def generate_tx_id(prefix: str = "TXN") -> str:
         return f"{prefix}-{uuid.uuid4().hex[:20].upper()}"
 
+    @staticmethod
+    def normalize_santimpay_tx_id(raw_tx_id: Optional[str]) -> str:
+        """
+        SantimPay direct payment is most stable with numeric ids.
+        Keep only digits and clamp length; fallback to epoch+random digits.
+        """
+        digits = "".join(ch for ch in str(raw_tx_id or "") if ch.isdigit())
+        if len(digits) < 8:
+            # 10-digit epoch seconds + 6 random digits = 16-digit transaction id
+            digits = f"{int(time.time())}{uuid.uuid4().int % 1000000:06d}"
+        return digits[:20]
+
     def _get_setting(self, key: str, required: bool = True) -> str:
         value = getattr(settings, key, None) or os.getenv(key)
         if required and not value:
@@ -771,10 +745,10 @@ class PaymentService:
 
     def _resolve_merchant_id(self, merchant_id: Optional[str]) -> str:
         if merchant_id:
-            decoded = User.decode_merchant_id(str(merchant_id))
-            if decoded:
-                return decoded
-            raise PaymentConfigurationError("Invalid merchant_id in database")
+            normalized = str(merchant_id).strip()
+            if normalized:
+                return normalized
+            raise PaymentConfigurationError("Invalid merchant_id")
         return self._get_setting("SANTIMPAY_MERCHANT_ID")
 
     @staticmethod
@@ -804,6 +778,20 @@ class PaymentService:
         if not reason:
             raise PaymentServiceError("payment_reason is required")
         return reason
+
+    @staticmethod
+    def _normalize_payment_method(payment_method: str) -> str:
+        raw = (payment_method or "").strip().lower().replace("-", "").replace("_", "")
+        mapping = {
+            "telebirr": "Telebirr",
+            "mpesa": "Mpesa",
+            "bank": "Bank",
+        }
+        if raw in mapping:
+            return mapping[raw]
+        raise PaymentServiceError(
+            "Unsupported payment_method. Use one of: Telebirr, Mpesa, Bank."
+        )
 
     @staticmethod
     def _required_url(value: Optional[str], field_name: str) -> str:
@@ -918,34 +906,6 @@ class PaymentService:
             total += self._to_decimal(owner_price) * Decimal(str(item.quantity))
         return self._money(total)
 
-    def _calculate_marketer_payouts(self, payment: Payment, total_amount: Decimal) -> List[Dict[str, Any]]:
-        from marketer.models import MarketerContract
-
-        payouts: List[Dict[str, Any]] = []
-        order_items = payment.order.items.select_related("marketer_contract", "product").all()
-        for item in order_items:
-            contract = getattr(item, "marketer_contract", None)
-            if not contract or not contract.is_active():
-                continue
-            if item.product and item.product.shop_id != contract.shop_id:
-                continue
-            rate = self._normalize_marketer_rate(self._to_decimal(contract.commission_rate))
-            if rate <= Decimal("0.00"):
-                continue
-            amount = self._money(self._to_decimal(item.total) * rate)
-            if amount <= Decimal("0.00"):
-                continue
-            payouts.append(
-                {
-                    "user": contract.marketer,
-                    "rate": rate,
-                    "amount": amount,
-                    "contract_id": str(contract.id),
-                    "order_item_id": str(item.id),
-                }
-            )
-        return payouts
-
     def _restock_order_variants(self, order: Order) -> None:
         qty_by_variant: Dict[str, int] = {}
         for item in order.items.select_related("variant").all():
@@ -961,16 +921,6 @@ class PaymentService:
         for variant in variants:
             variant.stock += qty_by_variant[str(variant.id)]
             variant.save(update_fields=["stock", "updated_at"])
-
-    @staticmethod
-    def _normalize_marketer_rate(raw_value: Decimal) -> Decimal:
-        if raw_value <= Decimal("0"):
-            return Decimal("0")
-        if raw_value <= Decimal("1"):
-            return raw_value
-        if raw_value <= Decimal("100"):
-            return raw_value / Decimal("100")
-        return Decimal("1")
 
     def _resolve_payout_target(self, user: User) -> Dict[str, str]:
         preferred = list(
@@ -1001,11 +951,6 @@ class PaymentService:
         platform_user_email = getattr(settings, "PLATFORM_USER_EMAIL", None) or os.getenv("PLATFORM_USER_EMAIL")
         if not platform_user and platform_user_email:
             platform_user = User.objects.filter(email=platform_user_email).first()
-        if platform_user and not getattr(platform_user, "merchant_id", None):
-            configured_merchant = getattr(settings, "PLATFORM_MERCHANT_ID", None) or os.getenv("PLATFORM_MERCHANT_ID")
-            if configured_merchant:
-                platform_user.merchant_id = configured_merchant
-                platform_user.save(update_fields=["merchant_id", "updated_at"])
         return platform_user
 
     @staticmethod

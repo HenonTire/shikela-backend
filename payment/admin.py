@@ -6,10 +6,7 @@ from .services.service import PaymentService, PaymentServiceError
 
 
 def _refund_service(refund):
-	merchant_id = getattr(getattr(refund.payment.order.shop, "owner", None), "merchant_id", None)
-	if not merchant_id:
-		raise PaymentServiceError("Shop owner merchant_id is required for payment")
-	return PaymentService(merchant_id=merchant_id)
+	return PaymentService()
 
 
 @admin.register(Payment)

@@ -1,17 +1,39 @@
 from rest_framework import permissions
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
 from .models import *
 from .serializers import *
+from .services import get_ranked_products_queryset
 # Create your views here.
 
 class CreateProductView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
+
+    def get_queryset(self):
+        return get_ranked_products_queryset(
+            query=self.request.query_params.get("q"),
+            category_id=self.request.query_params.get("category_id"),
+            shop_id=self.request.query_params.get("shop_id"),
+        )
+
+
+class RankedProductListView(ListAPIView):
+    permission_classes = [permissions.AllowAny]
+    serializer_class = ProductSerializer
+
+    def get_queryset(self):
+        return get_ranked_products_queryset(
+            query=self.request.query_params.get("q"),
+            category_id=self.request.query_params.get("category_id"),
+            shop_id=self.request.query_params.get("shop_id"),
+        )
+
+
 class ProductDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
     queryset = Product.objects.all()

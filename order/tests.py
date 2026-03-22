@@ -20,13 +20,11 @@ class OrderViewsTests(APITestCase):
             email="owner_order_tests@example.com",
             password="pass1234",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
         )
         self.buyer = User.objects.create_user(
             email="buyer_order_tests@example.com",
             password="pass1234",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
 
         self.shop = Shop.objects.create(name="Order Test Shop", owner=self.owner)
@@ -405,13 +403,11 @@ class OrderConcurrencyTests(TransactionTestCase):
             email="owner_order_conc@example.com",
             password="pass1234",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
         )
         self.buyer = User.objects.create_user(
             email="buyer_order_conc@example.com",
             password="pass1234",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
 
         self.shop = Shop.objects.create(name="Order Concurrency Shop", owner=self.owner)
@@ -467,3 +463,4 @@ class OrderConcurrencyTests(TransactionTestCase):
             ("insufficient stock" in combined_error) or ("table is locked" in combined_error),
             results,
         )
+

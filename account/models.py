@@ -1,5 +1,4 @@
 import uuid
-import base64
 from django.db import models
 from django.contrib.auth.models import (
     AbstractBaseUser,
@@ -12,7 +11,11 @@ class UserManager(BaseUserManager):
         if not email:
             raise ValueError("Users must have an email")
         email = self.normalize_email(email)
-        user = self.model(email=email, **extra_fields)
+        # Accept legacy/optional kwargs (e.g. marketer_type) without failing
+        # when those fields are absent in the current User model.
+        model_fields = {field.name for field in self.model._meta.fields}
+        filtered_fields = {k: v for k, v in extra_fields.items() if k in model_fields}
+        user = self.model(email=email, **filtered_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -30,7 +33,6 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    MERCHANT_ID_PREFIX = "enc:"
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     ROLE_CHOICES = [
         ("CUSTOMER", "Customer"),
@@ -43,7 +45,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Basic fields
     email = models.EmailField(unique=True)
-    merchant_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
     first_name = models.CharField(max_length=30, blank=True)
     last_name = models.CharField(max_length=30, blank=True)
     phone_number = models.CharField(max_length=20, blank=True)
@@ -108,62 +109,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     bank_account_number = models.CharField(max_length=50, blank=True, null=True)
     #couiers fields
     is_available = models.BooleanField(default=True)
-    #marketer fields 
-     #marketer fields
-    marketer_type = models.CharField(
-        max_length=20,
-        choices=[
-            ("CREATOR", "Content Creator"),
-            ("AGENCY", "Marketing Agency"),
-        ]
-    )
-    bio = models.TextField(blank=True)
-    # Social proof (important for creators)
-    instagram = models.URLField(blank=True)
-    tiktok = models.URLField(blank=True)
-    youtube = models.URLField(blank=True)
-
-    followers_count = models.PositiveIntegerField(default=0)
-
-    # Agency-specific
-    team_size = models.PositiveIntegerField(null=True, blank=True)
-    website = models.URLField(blank=True)
-
-    SERVICES_CHOICES = [
-        ("ADS", "Paid Ads"),
-        ("CONTENT", "Content Creation"),
-        ("INFLUENCER", "Influencer Promotion"),
-        ("SEO", "SEO Marketing"),
-        ("BRANDING", "Branding"),
-    ]
-
-    services = models.CharField(max_length=255, default="ADS", blank=True, choices=SERVICES_CHOICES)  # Comma-separated list of services offered
-
-    # Pricing model
-    pricing_type = models.CharField(
-        max_length=20,
-        choices=[
-            ("PER_POST", "Per Post"),
-            ("PER_CAMPAIGN", "Per Campaign"),
-            ("MONTHLY", "Monthly Contract"),
-        ],
-        default="PER_CAMPAIGN"
-    )
-    base_price = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        null=True,
-        blank=True
-    )
-    marketer_commission = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        default=0,
-        help_text="Commission percent for marketer, e.g. 10.00 means 10%",
-    )
-
     # Trust system
     rating = models.FloatField(default=0.0)
     total_jobs = models.PositiveIntegerField(default=0)
@@ -176,37 +121,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
-
-    @classmethod
-    def encode_merchant_id(cls, value: str) -> str:
-        raw = (value or "").strip()
-        if not raw:
-            return ""
-        if raw.startswith(cls.MERCHANT_ID_PREFIX):
-            return raw
-        encoded = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
-        return f"{cls.MERCHANT_ID_PREFIX}{encoded}"
-
-    @classmethod
-    def decode_merchant_id(cls, value: str) -> str:
-        raw = (value or "").strip()
-        if not raw:
-            return ""
-        if not raw.startswith(cls.MERCHANT_ID_PREFIX):
-            return raw
-        payload = raw[len(cls.MERCHANT_ID_PREFIX):]
-        try:
-            return base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8")
-        except Exception:
-            return ""
-
-    def get_decoded_merchant_id(self) -> str:
-        return self.decode_merchant_id(self.merchant_id or "")
-
-    def save(self, *args, **kwargs):
-        if self.merchant_id:
-            self.merchant_id = self.encode_merchant_id(self.merchant_id)
-        super().save(*args, **kwargs)
 
 
 class PaymentMethod(models.Model):

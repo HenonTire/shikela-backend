@@ -5,6 +5,7 @@ from rest_framework.test import APIRequestFactory
 from account.models import User
 from catalog.models import Category, Product, ProductReview, ProductVariant
 from catalog.serializers import ProductSerializer
+from order.models import Order, OrderItem
 from shop.models import Shop
 
 
@@ -22,7 +23,6 @@ class CatalogModelTests(TestCase):
             email="owner-sku@example.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
         )
         shop = Shop.objects.create(name="SKU Shop", owner=owner)
         category = Category.objects.create(name="Accessories")
@@ -44,7 +44,6 @@ class ProductSerializerTests(TestCase):
             email="shopowner@example.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
         )
         self.shop = Shop.objects.create(name="My Shop", owner=self.owner)
         self.category = Category.objects.create(name="Phones", slug="phones")
@@ -110,19 +109,16 @@ class ProductReviewAPITests(TestCase):
             email="owner-review@example.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
         )
         self.user1 = User.objects.create_user(
             email="user1-review@example.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
         self.user2 = User.objects.create_user(
             email="user2-review@example.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
         self.shop = Shop.objects.create(name="Review Shop", owner=self.owner)
         self.category = Category.objects.create(name="Review Cat")
@@ -172,3 +168,71 @@ class ProductReviewAPITests(TestCase):
         data = ProductSerializer(instance=self.product, context={"request": request}).data
         self.assertEqual(data["reviews_count"], 2)
         self.assertEqual(data["average_rating"], 4.5)
+
+
+class RankedProductListEndpointTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.owner = User.objects.create_user(
+            email="owner-rank@example.com",
+            password="Pass123!",
+            role="SHOP_OWNER",
+        )
+        self.customer = User.objects.create_user(
+            email="customer-rank@example.com",
+            password="Pass123!",
+            role="CUSTOMER",
+        )
+        self.shop = Shop.objects.create(name="Rank Shop", owner=self.owner)
+        self.category = Category.objects.create(name="Rank Category")
+
+    def test_ranked_products_endpoint_lists_products(self):
+        high_sales = Product.objects.create(
+            name="High Sales Product",
+            shop=self.shop,
+            category=self.category,
+            price="100.00",
+        )
+        low_sales = Product.objects.create(
+            name="Low Sales Product",
+            shop=self.shop,
+            category=self.category,
+            price="100.00",
+        )
+
+        order = Order.objects.create(
+            order_number="ORD-RANK-0001",
+            user=self.customer,
+            shop=self.shop,
+            status=Order.Status.PAID,
+            subtotal="2100.00",
+            total_amount="2100.00",
+            payment_method="CASH",
+            delivery_address="Addis Ababa",
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=high_sales,
+            variant=None,
+            product_name=high_sales.name,
+            sku=high_sales.sku or "HS-1",
+            price="100.00",
+            quantity=20,
+            total="2000.00",
+        )
+        OrderItem.objects.create(
+            order=order,
+            product=low_sales,
+            variant=None,
+            product_name=low_sales.name,
+            sku=low_sales.sku or "LS-1",
+            price="100.00",
+            quantity=1,
+            total="100.00",
+        )
+
+        response = self.client.get("/catalog/products/all/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertGreaterEqual(len(response.data), 2)
+        self.assertEqual(response.data[0]["id"], str(high_sales.id))
+

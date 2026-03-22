@@ -1,23 +1,56 @@
 import time
+import json
 from typing import Any, Dict, Optional
 
-import jwt
 import requests
+from jwt.api_jws import PyJWS
 
 
 PRODUCTION_BASE_URL = "https://services.santimpay.com/api/v1/gateway"
 TEST_BASE_URL = "https://testnet.santimpay.com/api/v1/gateway"
+PRODUCTION_DIRECT_PAYMENT_URL = "https://services.santimpay.com/api/v1/gateway/direct-payment"
 
 
 class SantimpaySDK:
-    def __init__(self, merchant_id: str, private_key: str, test_bed: bool = False) -> None:
+    def __init__(
+        self,
+        merchant_id: str,
+        private_key: str,
+        test_bed: bool = False,
+        sign_token_url: str = "",
+    ) -> None:
         self.private_key = private_key
         self.merchant_id = merchant_id
         self.base_url = TEST_BASE_URL if test_bed else PRODUCTION_BASE_URL
+        self.sign_token_url = sign_token_url.strip()
+
+    def _get_signed_token(self, payload: Dict[str, Any]) -> str:
+        """
+        Preferred flow: send payload to signer service and use returned signed token.
+        Fallback: local ES256 signing for backward compatibility.
+        """
+        if self.sign_token_url:
+            return self._fetch_remote_signed_token(payload)
+        return self._sign_es256(payload)
+
+    def _fetch_remote_signed_token(self, payload: Dict[str, Any]) -> str:
+        response = requests.post(self.sign_token_url, json=payload, timeout=30)
+        if not response.ok:
+            try:
+                raise Exception(response.json())
+            except ValueError as exc:
+                raise Exception(response.text) from exc
+        data = response.json()
+        token = data.get("signedToken") or data.get("token")
+        if not token:
+            raise Exception("Signer response missing signed token")
+        return token
 
     def _sign_es256(self, payload: Dict[str, Any]) -> str:
-        # Keep token structure compatible with the Node SDK.
-        return jwt.encode(payload, self.private_key, algorithm="ES256")
+        # Keep token structure compatible with the Node SDK:
+        # it signs JSON.stringify(payload), not a JWT claims object.
+        raw_payload = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return PyJWS().encode(raw_payload, self.private_key, algorithm="ES256")
 
     def generate_signed_token_for_initiate_payment(self, amount: float, payment_reason: str) -> str:
         payload = {
@@ -26,7 +59,7 @@ class SantimpaySDK:
             "merchantId": self.merchant_id,
             "generated": int(time.time()),
         }
-        return self._sign_es256(payload)
+        return self._get_signed_token(payload)
 
     def generate_signed_token_for_direct_payment(
         self, amount: float, payment_reason: str, payment_method: str, phone_number: str
@@ -39,7 +72,7 @@ class SantimpaySDK:
             "merchantId": self.merchant_id,
             "generated": int(time.time()),
         }
-        return self._sign_es256(payload)
+        return self._get_signed_token(payload)
 
     def generate_signed_token_for_get_transaction(self, tx_id: str) -> str:
         payload = {
@@ -50,7 +83,7 @@ class SantimpaySDK:
             "merchantId": self.merchant_id,
             "generated": int(time.time()),
         }
-        return self._sign_es256(payload)
+        return self._get_signed_token(payload)
 
     def generate_signed_token_for_direct_payment_or_b2c(
         self, amount: float, payment_reason: str, payment_method: str, phone_number: str
@@ -63,7 +96,7 @@ class SantimpaySDK:
             "merchantId": self.merchant_id,
             "generated": int(time.time()),
         }
-        return self._sign_es256(payload)
+        return self._get_signed_token(payload)
 
     def _post(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         response = requests.post(f"{self.base_url}/{endpoint}", json=payload, timeout=30)
@@ -124,7 +157,13 @@ class SantimpaySDK:
             "paymentMethod": payment_method,
             "notifyUrl": notify_url,
         }
-        return self._post("direct-payment", payload)
+        response = requests.post(PRODUCTION_DIRECT_PAYMENT_URL, json=payload, timeout=30)
+        if not response.ok:
+            try:
+                raise Exception(response.json())
+            except ValueError as exc:
+                raise Exception(response.text) from exc
+        return response.json()
 
     def send_to_customer(
         self,

@@ -1,8 +1,6 @@
 from .models import *
-from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from account.serializers import MarketerSerializer
-User = get_user_model()
+
 
 class ThemeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -17,6 +15,7 @@ class ThemeSerializer(serializers.ModelSerializer):
             "is_active",
         ]
 
+
 class ShopThemeSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShopThemeSettings
@@ -27,28 +26,19 @@ class ShopThemeSettingsSerializer(serializers.ModelSerializer):
             "banner_image",
             "font_family",
         ]
-class ShopSerializer(serializers.ModelSerializer):
 
+
+class ShopSerializer(serializers.ModelSerializer):
     theme = ThemeSerializer(read_only=True)
 
     theme_id = serializers.PrimaryKeyRelatedField(
         queryset=Theme.objects.all(),
         source="theme",
         write_only=True,
-        required=False
+        required=False,
     )
 
     theme_settings = ShopThemeSettingsSerializer(read_only=True)
-
-    marketer = MarketerSerializer(read_only=True, many=True)
-
-    marketer_ids = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.filter(role='MARKETER'),
-        source="marketer",  # 🔥 THIS IS IMPORTANT
-        write_only=True,
-        many=True,
-        required=False
-    )
 
     class Meta:
         model = Shop
@@ -58,8 +48,6 @@ class ShopSerializer(serializers.ModelSerializer):
             "description",
             "domain",
             "created_at",
-            "marketer",
-            "marketer_ids",
             "theme",
             "theme_id",
             "theme_settings",
@@ -71,18 +59,6 @@ class ShopSerializer(serializers.ModelSerializer):
         if getattr(request.user, "owned_shop", None):
             raise serializers.ValidationError("Shop owner already has a shop.")
 
-        # Remove marketers before create
-        marketers = validated_data.pop("marketer", [])
-
-        shop = Shop.objects.create(
-            owner=request.user,
-            **validated_data
-        )
-
-        # Assign ManyToMany AFTER creation
-        if marketers:
-            shop.marketer.set(marketers)
-
+        shop = Shop.objects.create(owner=request.user, **validated_data)
         ShopThemeSettings.objects.create(shop=shop)
-
         return shop

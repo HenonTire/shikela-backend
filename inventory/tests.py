@@ -13,7 +13,6 @@ class InventoryServiceTests(TestCase):
             email="owner@example.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
         )
         shop = Shop.objects.create(name="Test Shop", owner=user)
         category = Category.objects.create(name="Electronics", slug="electronics")
@@ -100,7 +99,6 @@ class StockManagerTests(TestCase):
             email="owner2@example.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
         )
         shop = Shop.objects.create(name="Stock Shop", owner=user)
         category = Category.objects.create(name="Apparel", slug="apparel")
@@ -161,3 +159,4 @@ class StockManagerTests(TestCase):
         self.assertEqual(total_reserved, 2)
         self.assertEqual(total_available, 10)
         self.assertEqual(StockMovement.objects.filter(reason="Order Release").count(), 2)
+

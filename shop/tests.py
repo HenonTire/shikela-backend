@@ -11,13 +11,6 @@ class ShopModelTests(TestCase):
             email="owner-shop@example.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
-        )
-        self.marketer = User.objects.create_user(
-            email="marketer@example.com",
-            password="Pass123!",
-            role="MARKETER",
-            marketer_type="CREATOR",
         )
         self.theme = Theme.objects.create(
             name="Modern",
@@ -54,13 +47,6 @@ class ShopModelTests(TestCase):
         )
         self.assertEqual(str(shop), "Downtown Store")
 
-    def test_shop_can_assign_marketer(self):
-        shop = Shop.objects.create(name="Growth Store", owner=self.owner, theme=self.theme)
-        shop.marketers.add(self.marketer)
-
-        self.assertEqual(shop.marketers.count(), 1)
-        self.assertEqual(shop.marketers.first().id, self.marketer.id)
-
     def test_theme_settings_defaults(self):
         shop = Shop.objects.create(name="Styled Store", owner=self.owner, theme=self.theme)
         settings = ShopThemeSettings.objects.create(shop=shop)
@@ -68,3 +54,4 @@ class ShopModelTests(TestCase):
         self.assertEqual(settings.primary_color, "#000000")
         self.assertEqual(settings.secondary_color, "#ffffff")
         self.assertEqual(settings.font_family, "Arial")
+

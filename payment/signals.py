@@ -35,14 +35,7 @@ def _record_settlement_earnings_on_delivery(sender, instance: Order, **kwargs):
     if not payment:
         return
 
-    merchant_id = (payment.metadata or {}).get("merchant_id") or getattr(
-        getattr(instance.shop, "owner", None), "merchant_id", ""
-    )
-    if not merchant_id:
-        logger.warning("Skipping settlement earnings for order=%s: merchant_id missing", instance.id)
-        return
-
     try:
-        PaymentService(merchant_id=merchant_id).record_settlement_earnings(payment)
+        PaymentService().record_settlement_earnings(payment)
     except PaymentServiceError:
         logger.exception("Failed to record settlement earnings for order=%s", instance.id)

@@ -19,14 +19,11 @@ class CourierFlowTests(TestCase):
             email="owner_courier@example.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            marketer_type="CREATOR",
-            merchant_id="merchant-owner",
         )
         self.customer = User.objects.create_user(
             email="customer_courier@example.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
         self.shop = Shop.objects.create(name="Courier Shop", owner=self.owner)
         self.category = Category.objects.create(name="Courier Category")
@@ -109,3 +106,4 @@ class CourierFlowTests(TestCase):
         self.assertEqual(mock_post.call_count, 1)
         called_url = mock_post.call_args.args[0]
         self.assertEqual(called_url, "https://api.hudhud.example/shipments")
+

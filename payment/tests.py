@@ -1,5 +1,5 @@
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
@@ -9,11 +9,13 @@ from catalog.models import Category, Product, ProductVariant
 from order.models import Order, OrderItem
 from payment.models import Earning, Payment
 from payment.services.service import PaymentService, PaymentServiceError
+from payment.services.santimpay_sdk import SantimpaySDK
 from shop.models import Shop
 
 
 @override_settings(
     SANTIMPAY_PRIVATE_KEY="dummy-private-key",
+    SANTIMPAY_MERCHANT_ID="TEST-MERCHANT-ID",
     SANTIMPAY_TEST_BED=True,
     SANTIMPAY_NOTIFY_URL="http://localhost:8000/payment/webhook/santimpay/",
 )
@@ -24,23 +26,18 @@ class PayoutRequestTests(TestCase):
             email="owner@shop.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            merchant_id="OWNER-MERCHANT-001",
-            marketer_type="CREATOR",
             phone_number="0911000000",
         )
         self.supplier = User.objects.create_user(
             email="supplier@shop.com",
             password="Pass123!",
             role="SUPPLIER",
-            merchant_id="SUP-MERCHANT-001",
-            marketer_type="CREATOR",
             phone_number="0911223344",
         )
         self.customer = User.objects.create_user(
             email="customer@shop.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
         self.shop = Shop.objects.create(name="Test Shop", owner=self.shop_owner)
         self.product = Product.objects.create(
@@ -78,9 +75,9 @@ class PayoutRequestTests(TestCase):
             status=Payment.Status.COMPLETED,
             provider="SANTIMPAY",
             provider_reference="TXN-TEST-1",
-            metadata={"merchant_id": self.shop_owner.merchant_id},
+            metadata={"merchant_id": "TEST-MERCHANT-ID"},
         )
-        PaymentService(merchant_id=self.shop_owner.merchant_id).record_settlement_earnings(self.payment)
+        PaymentService(merchant_id="TEST-MERCHANT-ID").record_settlement_earnings(self.payment)
 
     @patch("payment.services.service.PaymentService._pay_user")
     def test_payout_executes_only_on_user_request(self, mock_pay_user):
@@ -141,15 +138,16 @@ class PayoutRequestTests(TestCase):
     def test_settlement_is_blocked_until_order_delivered(self):
         self.order.status = Order.Status.PAID
         self.order.save(update_fields=["status", "updated_at"])
-        self.payment.metadata = {"merchant_id": self.shop_owner.merchant_id}
+        self.payment.metadata = {"merchant_id": "TEST-MERCHANT-ID"}
         self.payment.save(update_fields=["metadata", "updated_at"])
 
         with self.assertRaises(PaymentServiceError):
-            PaymentService(merchant_id=self.shop_owner.merchant_id).record_settlement_earnings(self.payment)
+            PaymentService(merchant_id="TEST-MERCHANT-ID").record_settlement_earnings(self.payment)
 
 
 @override_settings(
     SANTIMPAY_PRIVATE_KEY="dummy-private-key",
+    SANTIMPAY_MERCHANT_ID="TEST-MERCHANT-ID",
     SANTIMPAY_TEST_BED=True,
     SANTIMPAY_NOTIFY_URL="http://localhost:8000/payment/webhook/santimpay/",
 )
@@ -159,15 +157,12 @@ class PaymentLifecycleLogicTests(TestCase):
             email="owner_logic@shop.com",
             password="Pass123!",
             role="SHOP_OWNER",
-            merchant_id="OWNER-MERCHANT-LOGIC",
-            marketer_type="CREATOR",
             phone_number="0911001111",
         )
         self.customer = User.objects.create_user(
             email="customer_logic@shop.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
         self.shop = Shop.objects.create(name="Logic Shop", owner=self.shop_owner)
         self.category = Category.objects.create(name="Logic Category")
@@ -213,9 +208,9 @@ class PaymentLifecycleLogicTests(TestCase):
             status=Payment.Status.PENDING,
             provider="SANTIMPAY",
             provider_reference="TXN-LOGIC-001",
-            metadata={"merchant_id": self.shop_owner.merchant_id},
+            metadata={"merchant_id": "TEST-MERCHANT-ID"},
         )
-        self.service = PaymentService(merchant_id=self.shop_owner.merchant_id)
+        self.service = PaymentService(merchant_id="TEST-MERCHANT-ID")
 
     def test_transition_matrix_allows_direct_pending_completion_and_failure(self):
         self.assertTrue(self.service._can_transition("PENDING", "COMPLETED"))
@@ -223,6 +218,16 @@ class PaymentLifecycleLogicTests(TestCase):
         self.assertTrue(self.service._can_transition("PENDING", "PROCESSING"))
         self.assertFalse(self.service._can_transition("FAILED", "COMPLETED"))
         self.assertFalse(self.service._can_transition("REFUNDED", "COMPLETED"))
+
+    def test_normalize_santimpay_tx_id_keeps_digits_only(self):
+        tx_id = self.service.normalize_santimpay_tx_id("ORD-abc-1234-XYZ-5678")
+        self.assertEqual(tx_id, "12345678")
+
+    def test_normalize_santimpay_tx_id_generates_fallback_when_missing_digits(self):
+        tx_id = self.service.normalize_santimpay_tx_id("ORD-ONLY-LETTERS")
+        self.assertTrue(tx_id.isdigit())
+        self.assertGreaterEqual(len(tx_id), 8)
+        self.assertLessEqual(len(tx_id), 20)
 
     @patch("payment.services.service.PaymentService.get_transaction_status")
     def test_sync_order_status_moves_pending_to_completed_on_success_gateway_status(self, mock_status):
@@ -285,3 +290,34 @@ class PaymentLifecycleLogicTests(TestCase):
         self.order.status = Order.Status.DELIVERED
         self.order.save(update_fields=["status", "updated_at"])
         self.assertGreater(Earning.objects.filter(payment=self.payment).count(), 0)
+
+
+class SantimPaySdkSignerTests(TestCase):
+    @patch("payment.services.santimpay_sdk.requests.post")
+    def test_direct_payment_token_uses_remote_signer_when_configured(self, mock_post):
+        sign_response = Mock()
+        sign_response.ok = True
+        sign_response.json.return_value = {"signedToken": "REMOTE-SIGNED-TOKEN"}
+        mock_post.return_value = sign_response
+
+        sdk = SantimpaySDK(
+            merchant_id="MERCHANT-1",
+            private_key="dummy-private-key",
+            test_bed=True,
+            sign_token_url="https://signer.example.com/sign",
+        )
+
+        token = sdk.generate_signed_token_for_direct_payment(
+            amount=1.0,
+            payment_reason="Payment for a coffee",
+            payment_method="Telebirr",
+            phone_number="+251938646985",
+        )
+
+        self.assertEqual(token, "REMOTE-SIGNED-TOKEN")
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["paymentReason"],
+            "Payment for a coffee",
+        )
+

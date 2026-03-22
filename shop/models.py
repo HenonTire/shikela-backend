@@ -49,12 +49,6 @@ class Shop(models.Model):
         blank=True,
         related_name="shops"
     )
-    marketers = models.ManyToManyField(
-    User,
-    blank=True,
-    related_name="marketing_shops",
-    limit_choices_to={"role": "MARKETER"}
-)
 
     domain = models.CharField(max_length=255, unique=True, blank=True, null=True)
 

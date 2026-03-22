@@ -32,7 +32,6 @@ class BadgeThresholds:
     shop_owner_vip_orders: int = 200
     supplier_vip_units: int = 500
     supplier_vip_revenue: Decimal = Decimal("2000.00")
-    marketer_vip_revenue: Decimal = Decimal("1500.00")
     courier_vip_deliveries: int = 30
     trusted_min_success_rate: Decimal = Decimal("0.95")
     trusted_max_refund_rate: Decimal = Decimal("0.03")
@@ -44,12 +43,9 @@ def _is_suspended(user) -> bool:
     return not bool(getattr(user, "is_active", True))
 
 
-def _is_phone_verified(user) -> bool:
-    return bool(getattr(user, "is_verified", False))
+def _has_license_document(user) -> bool:
+    return bool(getattr(user, "license_document", None))
 
-
-def _has_merchant_id(user) -> bool:
-    return bool(getattr(user, "merchant_id", None))
 
 
 def _account_age_days(user) -> int:
@@ -97,15 +93,6 @@ def _supplier_metrics(user) -> tuple[int, Decimal, int, int, Optional[timezone.d
     return units, revenue, success_items.count(), failed_items.count(), latest
 
 
-def _marketer_metrics(user) -> tuple[Decimal, int, int, Optional[timezone.datetime]]:
-    base_qs = Order.objects.filter(shop__marketers=user)
-    success_qs = base_qs.filter(status__in=SALE_STATUSES)
-    failed_qs = base_qs.filter(status__in=FAILED_STATUSES)
-    revenue = success_qs.aggregate(total=Sum("total_amount"))["total"] or Decimal("0.00")
-    latest = base_qs.order_by("-created_at").values_list("created_at", flat=True).first()
-    return Decimal(str(revenue)), success_qs.count(), failed_qs.count(), latest
-
-
 def _courier_metrics(user) -> tuple[int, int, int]:
     deliveries = int(getattr(user, "total_jobs", 0) or 0)
     success = deliveries
@@ -122,9 +109,7 @@ def _is_inactive(last_activity, threshold_days: int) -> bool:
 def _check_verified(user) -> bool:
     if _is_suspended(user):
         return False
-    if getattr(user, "role", "CUSTOMER") == "CUSTOMER":
-        return _is_phone_verified(user)
-    return _is_phone_verified(user) and _has_merchant_id(user)
+    return _has_license_document(user)
 
 
 def _check_vip(user, t: BadgeThresholds) -> bool:
@@ -144,11 +129,6 @@ def _check_vip(user, t: BadgeThresholds) -> bool:
         if _is_inactive(last_activity, t.vip_inactive_days):
             return False
         return units >= t.supplier_vip_units or revenue >= t.supplier_vip_revenue
-    if role == "MARKETER":
-        revenue, *_rest, last_activity = _marketer_metrics(user)
-        if _is_inactive(last_activity, t.vip_inactive_days):
-            return False
-        return revenue >= t.marketer_vip_revenue
     if role == "COURIER":
         deliveries, *_ = _courier_metrics(user)
         return deliveries >= t.courier_vip_deliveries
@@ -178,9 +158,6 @@ def _check_trusted(user, t: BadgeThresholds) -> bool:
             Q(product__supplier=user) | Q(variant__product__supplier=user),
             order__status=Order.Status.REFUNDED,
         ).count()
-    elif role == "MARKETER":
-        _, success, failed, _ = _marketer_metrics(user)
-        refunded = Order.objects.filter(shop__marketers=user, status=Order.Status.REFUNDED).count()
     elif role == "COURIER":
         _, success, failed = _courier_metrics(user)
         refunded = 0
@@ -213,4 +190,3 @@ def resolve_badge(user, persist: bool = True) -> str:
         user.badge = badge
         user.save(update_fields=["badge", "updated_at"])
     return badge
-

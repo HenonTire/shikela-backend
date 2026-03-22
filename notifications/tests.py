@@ -12,13 +12,11 @@ class NotificationsApiTests(TestCase):
             email="user@shikela.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
         self.other = User.objects.create_user(
             email="other@shikela.com",
             password="Pass123!",
             role="CUSTOMER",
-            marketer_type="CREATOR",
         )
         self.client.force_authenticate(self.user)
 
@@ -84,3 +82,4 @@ class NotificationsApiTests(TestCase):
         self.assertEqual(read_all.status_code, 200, read_all.data)
         note2.refresh_from_db()
         self.assertTrue(note2.is_read)
+

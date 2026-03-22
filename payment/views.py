@@ -35,11 +35,10 @@ from notifications.services import NotificationService, NotificationTemplates
 from analytics.services import AnalyticsService
 
 
-def _get_order_merchant_id(order: Order) -> str:
-    owner = getattr(getattr(order, "shop", None), "owner", None)
-    merchant_id = getattr(owner, "merchant_id", None)
+def _get_platform_merchant_id() -> str:
+    merchant_id = getattr(settings, "SANTIMPAY_MERCHANT_ID", "") or getattr(settings, "PLATFORM_MERCHANT_ID", "")
     if not merchant_id:
-        raise PaymentServiceError("Shop owner merchant_id is required for payment")
+        raise PaymentServiceError("SANTIMPAY_MERCHANT_ID is required for payment")
     return merchant_id
 
 
@@ -74,9 +73,9 @@ class DirectPaymentView(APIView):
             )
 
         try:
-            merchant_id = _get_order_merchant_id(order)
+            merchant_id = _get_platform_merchant_id()
             service = PaymentService(merchant_id=merchant_id)
-            tx_id = order.payment_reference or str(order.id)
+            tx_id = service.normalize_santimpay_tx_id(order.payment_reference or str(order.id))
             provider_response = service.direct_payment(
                 amount=order.total_amount,
                 payment_reason=f"Order payment {order.order_number}",
@@ -199,7 +198,7 @@ class RefundExecuteView(APIView):
             return Response({"detail": "Only approved refunds can be executed"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            merchant_id = _get_order_merchant_id(refund.payment.order)
+            merchant_id = _get_platform_merchant_id()
             service = PaymentService(merchant_id=merchant_id)
             target_user = refund.requested_by or refund.payment.user
             payout_info = service._resolve_payout_target(target_user)
@@ -236,8 +235,8 @@ class PayoutRequestView(APIView):
         has_available = Earning.objects.filter(user=request.user, status=Earning.Status.AVAILABLE).exists()
         if not has_available:
             return Response({"detail": "No available earnings to payout"}, status=status.HTTP_400_BAD_REQUEST)
-        merchant_id = request.user.merchant_id or getattr(settings, "PLATFORM_MERCHANT_ID", "")
         try:
+            merchant_id = _get_platform_merchant_id()
             service = PaymentService(merchant_id=merchant_id)
             payout_request = service.request_total_user_payout(user=request.user)
         except PaymentServiceError as exc:
@@ -332,7 +331,7 @@ class SantimPayWebhookView(View):
         if payment:
             try:
                 webhook_log.event_type = "PAYMENT_SYNC"
-                merchant_id = (payment.metadata or {}).get("merchant_id") or _get_order_merchant_id(payment.order)
+                merchant_id = _get_platform_merchant_id()
                 service = PaymentService(merchant_id=merchant_id)
                 with transaction.atomic():
                     order = payment.order
@@ -427,7 +426,7 @@ class SantimPayWebhookView(View):
         if refund:
             try:
                 webhook_log.event_type = "REFUND_SYNC"
-                merchant_id = (refund.payment.metadata or {}).get("merchant_id") or _get_order_merchant_id(refund.payment.order)
+                merchant_id = _get_platform_merchant_id()
                 service = PaymentService(merchant_id=merchant_id)
                 with transaction.atomic():
                     service.sync_refund_status(refund)

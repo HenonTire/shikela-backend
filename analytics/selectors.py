@@ -5,11 +5,9 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from payment.models import Earning
-from marketer.models import MarketerCommission
 from shop.models import Shop
 
 from .models import (
-    MarketerDailyAnalytics,
     PlatformDailyAnalytics,
     ShopDailyAnalytics,
     SupplierDailyAnalytics,
@@ -82,30 +80,6 @@ def get_supplier_dashboard(user) -> dict:
         "orders_count": int(totals["orders_count"] or 0),
         "pending_payout": str(_decimal(pending_payout)),
         "last_7_days": _last_days_series(qs, "date", "revenue", "revenue", days=7),
-    }
-
-
-def get_marketer_dashboard(user) -> dict:
-    today = timezone.localdate()
-    month_start = today.replace(day=1)
-    qs = MarketerDailyAnalytics.objects.filter(marketer=user)
-    totals = qs.aggregate(
-        total_revenue=Sum("revenue_generated"),
-        commission_earned=Sum("commission_earned"),
-        orders_count=Sum("orders_count"),
-    )
-    this_month = qs.filter(date__gte=month_start).aggregate(total=Sum("revenue_generated"))["total"]
-    pending_commissions = (
-        MarketerCommission.objects.filter(contract__marketer=user, status=MarketerCommission.Status.PENDING)
-        .aggregate(total=Sum("amount"))["total"]
-    )
-    return {
-        "total_revenue_generated": str(_decimal(totals["total_revenue"])),
-        "commission_earned": str(_decimal(totals["commission_earned"])),
-        "this_month_revenue": str(_decimal(this_month)),
-        "orders_count": int(totals["orders_count"] or 0),
-        "pending_commissions": str(_decimal(pending_commissions)),
-        "last_7_days": _last_days_series(qs, "date", "revenue_generated", "revenue", days=7),
     }
 
 

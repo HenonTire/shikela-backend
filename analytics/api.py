@@ -4,7 +4,6 @@ from rest_framework.views import APIView
 
 from .selectors import (
     get_admin_dashboard,
-    get_marketer_dashboard,
     get_shop_dashboard,
     get_supplier_dashboard,
 )
@@ -25,15 +24,6 @@ class IsSupplier(permissions.BasePermission):
             request.user
             and request.user.is_authenticated
             and request.user.role == "SUPPLIER"
-        )
-
-
-class IsMarketer(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.role == "MARKETER"
         )
 
 
@@ -64,13 +54,6 @@ class SupplierAnalyticsDashboardView(APIView):
 
     def get(self, request):
         return Response(get_supplier_dashboard(request.user))
-
-
-class MarketerAnalyticsDashboardView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsMarketer]
-
-    def get(self, request):
-        return Response(get_marketer_dashboard(request.user))
 
 
 class AdminAnalyticsDashboardView(APIView):

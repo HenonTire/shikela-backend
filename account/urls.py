@@ -10,7 +10,4 @@ urlpatterns = [
     path("register-supplier/", RegisterSupplierView.as_view(), name="register-supplier"),
     path("register-courier/", RegisterCourierView.as_view(), name="register-courier"),
     path('create-payment-method/', CreatePaymentMethodView.as_view(), name="create-payment-method"),
-    path("register-marketer/", RegisterMarketerView.as_view(), name="register-marketer"),
-
-    
 ]

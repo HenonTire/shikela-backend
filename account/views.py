@@ -70,7 +70,3 @@ class CreatePaymentMethodView(ListCreateAPIView):
     queryset = PaymentMethod.objects.all()
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = PaymentMethodSerializer
-class RegisterMarketerView(ListCreateAPIView):
-    queryset = User.objects.filter(role='MARKETER')
-    permission_classes = [permissions.AllowAny]
-    serializer_class = MarketerRegisterSerializer

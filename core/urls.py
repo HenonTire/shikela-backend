@@ -17,4 +17,5 @@ urlpatterns = [
     path('marketer/', include('marketer.urls')),
     path('analytics/', include('analytics.urls')),
     path('api/notifications/', include('notifications.urls')),
+    path('inventory/', include('inventory.urls')),
 ]
