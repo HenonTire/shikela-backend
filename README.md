@@ -440,6 +440,170 @@ curl -X PATCH http://127.0.0.1:8000/catalog/reviews/<review_id>/ \
   -d '{"comment":"Updated review"}'
 ```
 
+## Hub (Social Feed & Interactions)
+Base path: `/hub/`
+
+All Hub endpoints require JWT authentication.
+
+**Get My Hub Profile**
+`GET /hub/profiles/me/`
+
+Automatically creates/updates a hub profile based on the authenticated user if missing.
+
+```bash
+curl -X GET http://127.0.0.1:8000/hub/profiles/me/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Follow Seller Profile**
+`POST /hub/profiles/<profile_id>/follow/`
+
+Notes:
+- You cannot follow yourself.
+- Only seller profiles can be followed.
+
+```bash
+curl -X POST http://127.0.0.1:8000/hub/profiles/<profile_id>/follow/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Unfollow Seller Profile**
+`DELETE /hub/profiles/<profile_id>/follow/`
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/hub/profiles/<profile_id>/follow/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**List Hub Posts**
+`GET /hub/posts/`
+
+Optional query params:
+- `mine=true|false` (if true, returns only current user's posts)
+
+```bash
+curl -X GET "http://127.0.0.1:8000/hub/posts/?mine=true" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Create Hub Post**
+`POST /hub/posts/`
+
+Request fields:
+- `title` (string, required)
+- `caption` (string, required)
+- `picture` (file, optional)
+
+Only seller profiles can create posts.
+
+```bash
+curl -X POST http://127.0.0.1:8000/hub/posts/ \
+  -H "Authorization: Bearer <access_token>" \
+  -F "title=New Arrival" \
+  -F "caption=Fresh stock just landed" \
+  -F "picture=@/path/to/photo.jpg"
+```
+
+**Post Detail**
+`GET /hub/posts/<post_id>/`
+
+```bash
+curl -X GET http://127.0.0.1:8000/hub/posts/<post_id>/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Update Post (Owner Only)**
+`PATCH /hub/posts/<post_id>/` or `PUT /hub/posts/<post_id>/`
+
+```bash
+curl -X PATCH http://127.0.0.1:8000/hub/posts/<post_id>/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"caption":"Updated caption"}'
+```
+
+**Delete Post (Owner Only)**
+`DELETE /hub/posts/<post_id>/`
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/hub/posts/<post_id>/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**List Post Comments**
+`GET /hub/posts/<post_id>/comments/`
+
+```bash
+curl -X GET http://127.0.0.1:8000/hub/posts/<post_id>/comments/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Create Post Comment**
+`POST /hub/posts/<post_id>/comments/`
+
+Request fields:
+- `content` (string, required)
+
+```bash
+curl -X POST http://127.0.0.1:8000/hub/posts/<post_id>/comments/ \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Looks great!"}'
+```
+
+**Like Post**
+`POST /hub/posts/<post_id>/like/`
+
+```bash
+curl -X POST http://127.0.0.1:8000/hub/posts/<post_id>/like/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Unlike Post**
+`DELETE /hub/posts/<post_id>/like/`
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/hub/posts/<post_id>/like/ \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Buyer Feed** (role: `CUSTOMER`)
+`GET /hub/buyer/feed/`
+
+Feed mix:
+- 60% followed sellers' posts
+- 30% trending posts
+- 10% new/random posts
+
+```bash
+curl -X GET "http://127.0.0.1:8000/hub/buyer/feed/?limit=30" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Seller Feed** (roles: `SHOP_OWNER`, `SUPPLIER`)
+`GET /hub/seller/feed/`
+
+Feed mix:
+- 40% trending products
+- 30% new products
+- 20% followed sellers activity
+- 10% random/discovery
+
+```bash
+curl -X GET "http://127.0.0.1:8000/hub/seller/feed/?limit=30" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Seller Feed Buckets** (roles: `SHOP_OWNER`, `SUPPLIER`)
+`GET /hub/seller/feed/buckets/`
+
+Returns each seller feed bucket separately for sectioned UI rendering.
+
+```bash
+curl -X GET "http://127.0.0.1:8000/hub/seller/feed/buckets/?limit=30" \
+  -H "Authorization: Bearer <access_token>"
+```
+
 ## Orders & Cart
 Base path: `/order/`
 

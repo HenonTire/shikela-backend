@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'marketer.apps.MarketerConfig',
     'notifications',
     'analytics',
+    'hub',
 
 ]
 
