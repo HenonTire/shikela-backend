@@ -1,17 +1,17 @@
 from django.contrib import admin
 
-from .models import CourierPartner, Shipment
+from .models import CourierProfile, Shipment
 
 
-@admin.register(CourierPartner)
-class CourierPartnerAdmin(admin.ModelAdmin):
-    list_display = ("name", "provider_code", "is_active", "priority", "created_at")
-    list_filter = ("is_active", "provider_code")
-    search_fields = ("name", "provider_code")
+@admin.register(CourierProfile)
+class CourierProfileAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "phone", "vehicle_type", "is_available", "updated_at")
+    list_filter = ("is_available", "vehicle_type")
+    search_fields = ("user__email", "user__phone_number", "phone")
 
 
 @admin.register(Shipment)
 class ShipmentAdmin(admin.ModelAdmin):
-    list_display = ("id", "order", "courier", "status", "external_tracking_id", "updated_at")
+    list_display = ("id", "order", "courier", "status", "assigned_at", "updated_at")
     list_filter = ("status", "courier")
-    search_fields = ("order__order_number", "external_tracking_id", "external_shipment_id")
+    search_fields = ("order__order_number", "courier__email")

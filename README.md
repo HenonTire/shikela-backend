@@ -791,25 +791,40 @@ curl -X POST http://127.0.0.1:8000/payment/refunds/<refund_id>/execute/ \
 ```
 
 ## Logistics (Courier)
-Base path: `/logistics/`
+Base path: `/courier/` (legacy alias also available under `/logistics/`)
 
 Shipment records are created automatically after successful payment webhook sync only for orders with `delivery_method = courier`.
 Orders with `delivery_method = seller` are fulfilled by the seller and do not create courier shipments.
+Shipments are internal and are auto-assigned to available couriers using round-robin order distribution.
+If no courier is currently available, shipment remains `PENDING` until a courier becomes available.
 
-**Courier Webhook**
-Endpoint used by courier partner systems to update shipment tracking state.
-
+**Courier Dashboard: List Assigned Shipments**
 ```bash
-curl -X POST http://127.0.0.1:8000/logistics/webhook/hudhud/ \
+curl -X GET http://127.0.0.1:8000/courier/shipments/ \
+  -H "Authorization: Bearer <courier_access_token>"
+```
+
+**Courier Dashboard: Shipment Detail**
+```bash
+curl -X GET http://127.0.0.1:8000/courier/shipments/<shipment_id>/ \
+  -H "Authorization: Bearer <courier_access_token>"
+```
+
+**Courier Dashboard: Update Shipment Status**
+```bash
+curl -X POST http://127.0.0.1:8000/courier/shipments/<shipment_id>/status/ \
+  -H "Authorization: Bearer <courier_access_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "tracking_id": "HD12345",
-    "status": "IN_TRANSIT"
+    "status": "IN_TRANSIT",
+    "payload": {
+      "note": "Left pickup point"
+    }
   }'
 ```
 
 Supported status inputs include:
-- `CREATED`
+- `PENDING`
 - `PICKED_UP`
 - `IN_TRANSIT`
 - `OUT_FOR_DELIVERY`
@@ -823,12 +838,6 @@ Order status mapping:
 - `OUT_FOR_DELIVERY` -> `shipped`
 - `DELIVERED` -> `delivered`
 - `FAILED` / `CANCELLED` -> `cancelled` (if not delivered)
-
-**Shipment Detail**
-```bash
-curl -X GET http://127.0.0.1:8000/logistics/shipments/<shipment_id>/ \
-  -H "Authorization: Bearer <access_token>"
-```
 
 ## Suppliers Portal
 Base path: `/supliers/`
@@ -1036,6 +1045,33 @@ Set these in environment:
 Install dependency:
 `firebase-admin`
 
+### Email Notifications (Optional)
+To send the same notifications by email, configure:
+- `EMAIL_NOTIFICATIONS_ENABLED=true`
+- `EMAIL_BACKEND` (example: `django.core.mail.backends.smtp.EmailBackend`)
+- `EMAIL_HOST`
+- `EMAIL_PORT`
+- `EMAIL_HOST_USER`
+- `EMAIL_HOST_PASSWORD`
+- `EMAIL_USE_TLS=true|false`
+- `EMAIL_USE_SSL=true|false`
+- `DEFAULT_FROM_EMAIL`
+- `EMAIL_SEND_ORDER_SHIPPED=true|false` (optional event)
+- `EMAIL_SEND_ORDER_DELIVERED=true|false` (optional event)
+- `EMAIL_SEND_URGENT_LOW_STOCK=true|false` (urgent only policy)
+
+Local development default is console backend (emails printed to server logs/stdout).
+
+### Email Policy Matrix
+| Event | Why Email is Essential | Delivery Rule |
+| --- | --- | --- |
+| New Order Received | Seller must act quickly | Always email + push |
+| Payment Settled / Commission Credited | Seller accounting and audit | Always email + push |
+| Order Confirmation / Payment Receipt | Buyer needs purchase record and proof | Always email + push |
+| Shipment Delivered | Buyer may miss push | Optional email (toggle with `EMAIL_SEND_ORDER_DELIVERED`) |
+| Order Canceled / Refund Completed | Legal, trust, and next steps | Always email + push |
+| Low Stock / Inventory Alert | Seller may miss in-app alerts | Email only when urgent (`payload.urgent=true`) |
+
 ### Device Token APIs
 **Register or update token (JWT required)**
 `POST /api/notifications/device-token/`
@@ -1060,16 +1096,38 @@ Request fields:
 **Mark all read**
 `POST /api/notifications/mark-all-read/`
 
+### Frontend Integration Flow
+1. User logs in and your app gets a JWT access token.
+2. App obtains an FCM token from Firebase SDK.
+3. App registers that token:
+`POST /api/notifications/device-token/` with `{ "token": "...", "device_type": "web|android" }`.
+4. App loads notification inbox:
+`GET /api/notifications/` (use pagination fields `count/next/previous/results`).
+5. When user opens one notification, mark it read:
+`PATCH /api/notifications/{id}/read/`.
+6. For "mark all read", call:
+`POST /api/notifications/mark-all-read/`.
+7. On logout (or token refresh), deactivate old token:
+`DELETE /api/notifications/device-token/`.
+
+Frontend behavior notes:
+- There is no public "send notification" API for clients.
+- Notifications are triggered internally by backend business events (payment, shipping, commissions).
+- Use the `payload` object (`type`, `entity_type`, `entity_id`, optional `order_id/commission_id/product_id`) for deep-link routing in the app.
+
 ### Trigger Events Implemented
 - Customer:
   - `payment_success`
   - `order_shipped`
   - `order_delivered`
+  - `order_cancelled`
+  - `refund_completed`
 - Shop Owner:
   - `new_order`
   - `payment_confirmed`
 - Supplier:
   - `product_sold`
+- Marketer:
   - `commission_created`
   - `commission_approved`
 
@@ -1077,12 +1135,13 @@ Request fields:
 All notifications include payload with:
 - `type`
 - `entity_id`
-- `entity_type` (`order` or `commission`)
+- `entity_type` (`order`, `commission`, `refund`, or `product`)
 
 Optional:
 - `order_id`
 - `commission_id`
 - `product_id`
+- `refund_id`
 
 
 ### New Features Added
@@ -1180,8 +1239,8 @@ Attach JWT:
 3. Shop owner imports supplier product into their shop (`/catalog/products/<id>/import/`).
 4. Customer adds to cart and checks out to create an order.
 5. Customer initiates payment (`/payment/direct/`).
-6. SantimPay webhook updates order/payment status and creates shipment for orders using `delivery_method = courier`.
-7. Courier webhook updates shipment and order delivery status (`/logistics/webhook/<courier>/`).
+6. SantimPay webhook updates order/payment status and creates shipment for orders using `delivery_method = courier`, then system auto-assigns the next available courier in round-robin order.
+7. Internal courier dashboard updates shipment and order delivery status (`/courier/shipments/<shipment_id>/status/`).
 
 **3) Basic Frontend Data Screens**
 Use these endpoints as your first screens:

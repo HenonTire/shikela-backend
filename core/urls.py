@@ -13,6 +13,7 @@ urlpatterns = [
     path('hub/', include('hub.urls')),
     path('order/', include('order.urls')),
     path('payment/', include('payment.urls')),
+    path('courier/', include('courier.urls')),
     path('logistics/', include('courier.urls')),
     path('supliers/', include('supliers.urls')),
     path('marketer/', include('marketer.urls')),

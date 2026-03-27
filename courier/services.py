@@ -1,117 +1,73 @@
 from __future__ import annotations
 
-import uuid
-from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-import requests
 from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+from django.contrib.auth import get_user_model
 
 from account.badge_logic import resolve_badge
 from order.models import Order
 from notifications.services import NotificationService, NotificationTemplates
 
-from .models import CourierPartner, Shipment
+from .models import CourierProfile, Shipment
+
+User = get_user_model()
 
 
 class LogisticsError(Exception):
     pass
 
 
-@dataclass(frozen=True)
-class ShipmentCreateResult:
-    shipment_id: str
-    tracking_id: str
-    status: str
-    raw_response: Dict[str, Any]
+def normalize_shipment_status(raw_status: str) -> str:
+    status = (raw_status or "").strip().upper()
+    mapping = {
+        "PENDING": Shipment.Status.PENDING,
+        "PICKED_UP": Shipment.Status.PICKED_UP,
+        "PICKUP": Shipment.Status.PICKED_UP,
+        "IN_TRANSIT": Shipment.Status.IN_TRANSIT,
+        "TRANSIT": Shipment.Status.IN_TRANSIT,
+        "OUT_FOR_DELIVERY": Shipment.Status.OUT_FOR_DELIVERY,
+        "DELIVERED": Shipment.Status.DELIVERED,
+        "FAILED": Shipment.Status.FAILED,
+        "CANCELLED": Shipment.Status.CANCELLED,
+    }
+    if status not in mapping:
+        raise LogisticsError("Invalid shipment status")
+    return mapping[status]
 
 
-class BaseCourierAdapter:
-    provider_code: str = "base"
-
-    def __init__(self, courier: CourierPartner):
-        self.courier = courier
-
-    def create_shipment(self, shipment: Shipment) -> ShipmentCreateResult:  # pragma: no cover - interface
-        raise NotImplementedError
-
-    def normalize_status(self, raw_status: str) -> str:
-        status = (raw_status or "").strip().upper()
-        mapping = {
-            "CREATED": Shipment.Status.CREATED,
-            "PICKED_UP": Shipment.Status.PICKED_UP,
-            "PICKUP": Shipment.Status.PICKED_UP,
-            "IN_TRANSIT": Shipment.Status.IN_TRANSIT,
-            "TRANSIT": Shipment.Status.IN_TRANSIT,
-            "OUT_FOR_DELIVERY": Shipment.Status.OUT_FOR_DELIVERY,
-            "DELIVERED": Shipment.Status.DELIVERED,
-            "FAILED": Shipment.Status.FAILED,
-            "CANCELLED": Shipment.Status.CANCELLED,
-        }
-        return mapping.get(status, Shipment.Status.PENDING)
-
-
-class HudhudAdapter(BaseCourierAdapter):
-    provider_code = "hudhud"
-
-    def create_shipment(self, shipment: Shipment) -> ShipmentCreateResult:
-        payload = {
-            "reference": str(shipment.id),
-            "order_number": shipment.order.order_number,
-            "delivery_address": shipment.order.delivery_address,
-            "customer_phone": getattr(shipment.order.user, "phone_number", ""),
-            "amount": float(shipment.order.total_amount),
-        }
-
-        # If no API config exists, keep a deterministic mock flow for local/dev.
-        if not self.courier.api_base_url:
-            tracking = f"HD-{uuid.uuid4().hex[:10].upper()}"
-            return ShipmentCreateResult(
-                shipment_id=f"MOCK-{uuid.uuid4().hex[:12].upper()}",
-                tracking_id=tracking,
-                status=Shipment.Status.CREATED,
-                raw_response={"mock": True, "tracking_id": tracking},
-            )
-
-        headers = {"Content-Type": "application/json"}
-        if self.courier.api_key:
-            headers["Authorization"] = f"Bearer {self.courier.api_key}"
-
-        response = requests.post(
-            f"{self.courier.api_base_url.rstrip('/')}/shipments",
-            json=payload,
-            headers=headers,
-            timeout=20,
+def select_next_available_courier():
+    couriers = list(
+        User.objects.filter(role="COURIER", is_active=True)
+        .filter(
+            Q(courier_profile__is_available=True)
+            | Q(courier_profile__isnull=True, is_available=True)
         )
-        if not response.ok:
-            try:
-                details = response.json()
-            except Exception:
-                details = {"text": response.text}
-            raise LogisticsError(f"Courier create shipment failed: {details}")
+        .order_by("created_at", "id")
+        .distinct()
+    )
+    if not couriers:
+        return None
 
-        data = response.json()
-        return ShipmentCreateResult(
-            shipment_id=str(data.get("shipment_id") or data.get("id") or ""),
-            tracking_id=str(data.get("tracking_id") or data.get("trackingId") or ""),
-            status=self.normalize_status(str(data.get("status") or "CREATED")),
-            raw_response=data,
-        )
+    last_assigned_courier_id = (
+        Shipment.objects.exclude(courier__isnull=True)
+        .order_by("-assigned_at", "-created_at")
+        .values_list("courier_id", flat=True)
+        .first()
+    )
+    if not last_assigned_courier_id:
+        return couriers[0]
 
+    courier_ids = [courier.id for courier in couriers]
+    try:
+        current_index = courier_ids.index(last_assigned_courier_id)
+    except ValueError:
+        return couriers[0]
 
-def _adapter_for(courier: CourierPartner) -> BaseCourierAdapter:
-    code = (courier.provider_code or "").lower()
-    if code == "hudhud":
-        return HudhudAdapter(courier)
-    # Fallback to Hudhud-compatible shape
-    return HudhudAdapter(courier)
-
-
-def select_active_courier() -> CourierPartner:
-    courier = CourierPartner.objects.filter(is_active=True).order_by("priority", "created_at").first()
-    if not courier:
-        raise LogisticsError("No active courier partner configured")
-    return courier
+    next_index = (current_index + 1) % len(couriers)
+    return couriers[next_index]
 
 
 @transaction.atomic
@@ -119,108 +75,121 @@ def create_shipment_for_order(order: Order) -> Shipment:
     if hasattr(order, "shipment"):
         return order.shipment
 
-    courier = select_active_courier()
     shipment = Shipment.objects.create(
         order=order,
-        courier=courier,
         status=Shipment.Status.PENDING,
+        last_event="shipment_created",
+        last_payload={
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+        },
     )
 
-    adapter = _adapter_for(courier)
-    result = adapter.create_shipment(shipment)
+    next_courier = select_next_available_courier()
+    if not next_courier:
+        return shipment
 
-    shipment.external_shipment_id = result.shipment_id
-    shipment.external_tracking_id = result.tracking_id
-    shipment.status = result.status or Shipment.Status.CREATED
-    shipment.last_event = "shipment_created"
-    shipment.last_payload = result.raw_response
-    shipment.save(
-        update_fields=[
-            "external_shipment_id",
-            "external_tracking_id",
-            "status",
-            "last_event",
-            "last_payload",
-            "updated_at",
-        ]
-    )
+    try:
+        shipment = assign_courier(shipment, next_courier)
+    except LogisticsError:
+        # Keep shipment created even if assignment fails due to availability races.
+        return shipment
     return shipment
 
 
 @transaction.atomic
-def update_shipment_status(shipment: Shipment, new_status: str, payload: Optional[Dict[str, Any]] = None) -> Shipment:
+def assign_courier(shipment: Shipment, courier_user) -> Shipment:
+    if not courier_user:
+        raise LogisticsError("Courier user is required")
+    if getattr(courier_user, "role", "") != "COURIER":
+        raise LogisticsError("Assigned user must have COURIER role")
+    if not getattr(courier_user, "is_active", True):
+        raise LogisticsError("Assigned courier is inactive")
+
+    profile = CourierProfile.objects.filter(user=courier_user).first()
+    if profile and not profile.is_available:
+        raise LogisticsError("Assigned courier is not available")
+
+    if shipment.status in {Shipment.Status.DELIVERED, Shipment.Status.FAILED, Shipment.Status.CANCELLED}:
+        raise LogisticsError("Cannot assign courier to terminal shipment")
+
+    shipment.courier = courier_user
+    shipment.assigned_at = timezone.now()
+    shipment.last_event = "courier_assigned"
+    shipment.last_payload = {
+        "courier_id": str(courier_user.id),
+        "courier_email": getattr(courier_user, "email", ""),
+    }
+    shipment.save(update_fields=["courier", "assigned_at", "last_event", "last_payload", "updated_at"])
+    return shipment
+
+
+@transaction.atomic
+def update_shipment_status(
+    shipment: Shipment,
+    new_status: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Shipment:
     payload = payload or {}
-    shipment.status = new_status
+    normalized_status = normalize_shipment_status(new_status)
+
+    shipment.status = normalized_status
     shipment.last_event = "status_update"
     shipment.last_payload = payload
     shipment.save(update_fields=["status", "last_event", "last_payload", "updated_at"])
 
     order = shipment.order
-    if new_status == Shipment.Status.PICKED_UP and order.status in {Order.Status.PAID, Order.Status.CONFIRMED}:
+    if normalized_status == Shipment.Status.PICKED_UP and order.status in {Order.Status.PAID, Order.Status.CONFIRMED}:
         order.status = Order.Status.CONFIRMED
         order.save(update_fields=["status", "updated_at"])
-    elif new_status in {Shipment.Status.IN_TRANSIT, Shipment.Status.OUT_FOR_DELIVERY}:
+    elif normalized_status in {Shipment.Status.IN_TRANSIT, Shipment.Status.OUT_FOR_DELIVERY}:
         if order.status != Order.Status.DELIVERED:
-            order.status = Order.Status.SHIPPED if new_status == Shipment.Status.OUT_FOR_DELIVERY else Order.Status.PROCESSING
-            order.save(update_fields=["status", "updated_at"])
-            if order.status == Order.Status.SHIPPED:
-                try:
-                    title, message, payload = NotificationTemplates.order_shipped(order)
-                    NotificationService.notify(
-                        user=order.user,
-                        notification_type="order_shipped",
-                        title=title,
-                        message=message,
-                        payload=payload,
-                    )
-                except Exception:
-                    pass
-    elif new_status == Shipment.Status.DELIVERED:
+            current_status = order.status
+            target_status = (
+                Order.Status.SHIPPED
+                if normalized_status == Shipment.Status.OUT_FOR_DELIVERY
+                else Order.Status.PROCESSING
+            )
+
+            # Ignore stale in-transit updates after the order is already shipped.
+            if current_status == Order.Status.SHIPPED and target_status == Order.Status.PROCESSING:
+                target_status = current_status
+
+            if current_status != target_status:
+                order.status = target_status
+                order.save(update_fields=["status", "updated_at"])
+                if target_status == Order.Status.SHIPPED:
+                    try:
+                        title, message, notification_payload = NotificationTemplates.order_shipped(order)
+                        NotificationService.notify(
+                            user=order.user,
+                            notification_type="order_shipped",
+                            title=title,
+                            message=message,
+                            payload=notification_payload,
+                        )
+                    except Exception:
+                        pass
+    elif normalized_status == Shipment.Status.DELIVERED:
         if order.status != Order.Status.DELIVERED:
             order.status = Order.Status.DELIVERED
             order.save(update_fields=["status", "updated_at"])
             try:
-                title, message, payload = NotificationTemplates.order_delivered(order)
+                title, message, notification_payload = NotificationTemplates.order_delivered(order)
                 NotificationService.notify(
                     user=order.user,
                     notification_type="order_delivered",
                     title=title,
                     message=message,
-                    payload=payload,
+                    payload=notification_payload,
                 )
             except Exception:
                 pass
-        # Badge refresh on successful delivery completion
         resolve_badge(order.user, persist=True)
         resolve_badge(order.shop.owner, persist=True)
-    elif new_status in {Shipment.Status.FAILED, Shipment.Status.CANCELLED}:
+    elif normalized_status in {Shipment.Status.FAILED, Shipment.Status.CANCELLED}:
         if order.status != Order.Status.DELIVERED:
             order.status = Order.Status.CANCELLED
             order.save(update_fields=["status", "updated_at"])
 
     return shipment
-
-
-@transaction.atomic
-def process_courier_webhook(provider_code: str, payload: Dict[str, Any]) -> Shipment:
-    tracking = str(payload.get("tracking_id") or payload.get("trackingId") or "").strip()
-    shipment_id = str(payload.get("shipment_id") or payload.get("shipmentId") or "").strip()
-    raw_status = str(payload.get("status") or "").strip()
-    if not raw_status:
-        raise LogisticsError("Missing status")
-
-    courier = CourierPartner.objects.filter(provider_code__iexact=provider_code, is_active=True).first()
-    if not courier:
-        raise LogisticsError("Courier partner not found")
-
-    shipment = None
-    if tracking:
-        shipment = Shipment.objects.filter(courier=courier, external_tracking_id=tracking).select_related("order", "order__shop__owner", "order__user").first()
-    if not shipment and shipment_id:
-        shipment = Shipment.objects.filter(courier=courier, external_shipment_id=shipment_id).select_related("order", "order__shop__owner", "order__user").first()
-    if not shipment:
-        raise LogisticsError("Shipment not found")
-
-    adapter = _adapter_for(courier)
-    normalized = adapter.normalize_status(raw_status)
-    return update_shipment_status(shipment, normalized, payload=payload)

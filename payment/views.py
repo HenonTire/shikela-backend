@@ -401,6 +401,18 @@ class SantimPayWebhookView(View):
                                 create_shipment_for_order(order)
                             except LogisticsError:
                                 logger.exception("Shipment creation failed for order=%s", order.id)
+                    elif previous_order_status != Order.Status.CANCELLED and order.status == Order.Status.CANCELLED:
+                        try:
+                            title, message, payload = NotificationTemplates.order_cancelled(order)
+                            NotificationService.notify(
+                                user=order.user,
+                                notification_type="order_cancelled",
+                                title=title,
+                                message=message,
+                                payload=payload,
+                            )
+                        except Exception:
+                            logger.exception("Failed to send order_cancelled notification order=%s", order.id)
                 webhook_log.processed = True
                 webhook_log.save(update_fields=["event_type", "processed"])
                 logger.info("Payment synced successfully: tx_id=%s", tx_id)
@@ -422,14 +434,37 @@ class SantimPayWebhookView(View):
             return JsonResponse({"status": "payment synced"}, status=200)
 
         # Try to sync Refund
-        refund = Refund.objects.filter(provider_reference=tx_id).select_related("payment__order__shop__owner").first()
+        refund = Refund.objects.filter(provider_reference=tx_id).select_related(
+            "requested_by",
+            "payment__user",
+            "payment__order__shop__owner",
+        ).first()
         if refund:
             try:
                 webhook_log.event_type = "REFUND_SYNC"
                 merchant_id = _get_platform_merchant_id()
                 service = PaymentService(merchant_id=merchant_id)
                 with transaction.atomic():
+                    previous_refund_status = refund.status
                     service.sync_refund_status(refund)
+                    refund.refresh_from_db(fields=["status", "amount", "reason", "requested_by"])
+                    if previous_refund_status != Refund.Status.COMPLETED and refund.status == Refund.Status.COMPLETED:
+                        target_user = refund.requested_by or refund.payment.user
+                        try:
+                            title, message, payload = NotificationTemplates.refund_completed(refund.payment.order, refund)
+                            NotificationService.notify(
+                                user=target_user,
+                                notification_type="refund_completed",
+                                title=title,
+                                message=message,
+                                payload=payload,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Failed to send refund_completed notification refund=%s order=%s",
+                                refund.id,
+                                refund.payment.order_id,
+                            )
                 webhook_log.processed = True
                 webhook_log.save(update_fields=["event_type", "processed"])
                 logger.info("Refund synced successfully: tx_id=%s", tx_id)

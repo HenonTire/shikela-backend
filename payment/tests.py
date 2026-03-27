@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from account.models import User
 from catalog.models import Category, Product, ProductVariant
 from order.models import Order, OrderItem
-from payment.models import Earning, Payment
+from payment.models import Earning, Payment, Refund
 from payment.services.service import PaymentService, PaymentServiceError
 from payment.services.santimpay_sdk import SantimpaySDK
 from shop.models import Shop
@@ -153,6 +153,7 @@ class PayoutRequestTests(TestCase):
 )
 class PaymentLifecycleLogicTests(TestCase):
     def setUp(self):
+        self.client = APIClient()
         self.shop_owner = User.objects.create_user(
             email="owner_logic@shop.com",
             password="Pass123!",
@@ -267,6 +268,50 @@ class PaymentLifecycleLogicTests(TestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.payment.status, Payment.Status.FAILED)
         self.assertEqual(self.order.status, Order.Status.PAID)
+
+    @patch("payment.views.NotificationService.notify")
+    @patch("payment.services.service.PaymentService.get_transaction_status")
+    def test_webhook_sends_order_cancelled_notification_on_failed_sync(self, mock_status, mock_notify):
+        mock_status.return_value = {"status": "FAILED"}
+
+        response = self.client.post(
+            "/payment/webhook/santimpay/",
+            {"id": self.payment.provider_reference},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.CANCELLED)
+        self.assertTrue(
+            any(call.kwargs.get("notification_type") == "order_cancelled" for call in mock_notify.call_args_list)
+        )
+
+    @patch("payment.views.NotificationService.notify")
+    @patch("payment.services.service.PaymentService.get_transaction_status")
+    def test_webhook_sends_refund_completed_notification(self, mock_status, mock_notify):
+        refund = Refund.objects.create(
+            payment=self.payment,
+            amount=self.payment.amount,
+            reason="Customer requested refund",
+            status=Refund.Status.PROCESSING,
+            provider_reference="TXN-REFUND-LOGIC-001",
+            requested_by=self.customer,
+        )
+        mock_status.return_value = {"status": "SUCCESS"}
+
+        response = self.client.post(
+            "/payment/webhook/santimpay/",
+            {"id": refund.provider_reference},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        refund.refresh_from_db()
+        self.assertEqual(refund.status, Refund.Status.COMPLETED)
+        self.assertTrue(
+            any(call.kwargs.get("notification_type") == "refund_completed" for call in mock_notify.call_args_list)
+        )
 
     def test_prepare_and_settle_split_payout_blocked_before_delivery(self):
         self.payment.status = Payment.Status.COMPLETED

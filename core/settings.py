@@ -133,6 +133,24 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
 }
 
+# Email engine
+EMAIL_NOTIFICATIONS_ENABLED = os.getenv("EMAIL_NOTIFICATIONS_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "25"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "false").lower() in {"1", "true", "yes", "on"}
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in {"1", "true", "yes", "on"}
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@shikela.local")
+SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+# Optional event toggles (policy-based email rules)
+EMAIL_SEND_ORDER_SHIPPED = os.getenv("EMAIL_SEND_ORDER_SHIPPED", "false").lower() in {"1", "true", "yes", "on"}
+EMAIL_SEND_ORDER_DELIVERED = os.getenv("EMAIL_SEND_ORDER_DELIVERED", "false").lower() in {"1", "true", "yes", "on"}
+EMAIL_SEND_URGENT_LOW_STOCK = os.getenv("EMAIL_SEND_URGENT_LOW_STOCK", "true").lower() in {"1", "true", "yes", "on"}
+EMAIL_SEND_OTHER_NOTIFICATION_TYPES = os.getenv("EMAIL_SEND_OTHER_NOTIFICATION_TYPES", "false").lower() in {"1", "true", "yes", "on"}
+
 # SantimPay (test mode by default for local development)
 def _normalize_pem(value: str) -> str:
     # Support env values stored with literal '\n' characters.
