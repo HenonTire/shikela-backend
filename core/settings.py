@@ -145,6 +145,10 @@ EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in {"1", "true", "ye
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@shikela.local")
 SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+EMAIL_VERIFICATION_ENABLED = os.getenv("EMAIL_VERIFICATION_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+EMAIL_VERIFICATION_REQUIRED_FOR_LOGIN = os.getenv("EMAIL_VERIFICATION_REQUIRED_FOR_LOGIN", "true").lower() in {"1", "true", "yes", "on"}
+EMAIL_VERIFICATION_BACKEND_BASE_URL = os.getenv("EMAIL_VERIFICATION_BACKEND_BASE_URL", "")
+EMAIL_VERIFICATION_FRONTEND_URL = os.getenv("EMAIL_VERIFICATION_FRONTEND_URL", "")
 # Optional event toggles (policy-based email rules)
 EMAIL_SEND_ORDER_SHIPPED = os.getenv("EMAIL_SEND_ORDER_SHIPPED", "false").lower() in {"1", "true", "yes", "on"}
 EMAIL_SEND_ORDER_DELIVERED = os.getenv("EMAIL_SEND_ORDER_DELIVERED", "false").lower() in {"1", "true", "yes", "on"}

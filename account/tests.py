@@ -1,5 +1,10 @@
 from django.test import TestCase
+from django.test import override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core import mail
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIRequestFactory
 
@@ -101,4 +106,56 @@ class BadgeLogicTests(TestCase):
 
         user.license_document = SimpleUploadedFile("license.pdf", b"fake-license", content_type="application/pdf")
         self.assertEqual(resolve_badge(user, persist=False), "verified")
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    EMAIL_VERIFICATION_ENABLED=True,
+    EMAIL_VERIFICATION_BACKEND_BASE_URL="http://testserver",
+)
+class EmailVerificationFlowTests(TestCase):
+    def test_register_sends_verification_email(self):
+        payload = {
+            "email": "verifyme@example.com",
+            "password": "Pass123!",
+            "first_name": "Verify",
+            "last_name": "Me",
+        }
+        response = self.client.post("/auth/register/", payload)
+
+        self.assertEqual(response.status_code, 201, response.content)
+        user = User.objects.get(email="verifyme@example.com")
+        self.assertFalse(user.is_verified)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("/auth/verify-email/", mail.outbox[0].body)
+
+    def test_verify_email_endpoint_marks_user_verified(self):
+        user = User.objects.create_user(email="pending@example.com", password="Pass123!")
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+
+        response = self.client.get(f"/auth/verify-email/?uid={uid}&token={token}")
+
+        self.assertEqual(response.status_code, 200, response.content)
+        user.refresh_from_db()
+        self.assertTrue(user.is_verified)
+
+    def test_login_requires_verified_email(self):
+        user = User.objects.create_user(email="blocked@example.com", password="Pass123!")
+
+        blocked_response = self.client.post(
+            "/auth/login/",
+            {"email": "blocked@example.com", "password": "Pass123!"},
+        )
+        self.assertEqual(blocked_response.status_code, 401, blocked_response.content)
+
+        user.is_verified = True
+        user.save(update_fields=["is_verified"])
+
+        allowed_response = self.client.post(
+            "/auth/login/",
+            {"email": "blocked@example.com", "password": "Pass123!"},
+        )
+        self.assertEqual(allowed_response.status_code, 200, allowed_response.content)
+        self.assertIn("access", allowed_response.json())
 

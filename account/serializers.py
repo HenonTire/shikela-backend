@@ -1,8 +1,13 @@
-from rest_framework.serializers import ModelSerializer
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from .models import *
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.serializers import ModelSerializer
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
 from .badge_logic import resolve_badge
+from .models import *
+
 User = get_user_model()
 
 class MerchantIdRepresentationMixin:
@@ -112,3 +117,15 @@ class PaymentMethodSerializer(ModelSerializer):
 
         validated_data['shop_owner'] = user
         return super().create(validated_data)
+
+
+class EmailVerificationTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        if getattr(settings, "EMAIL_VERIFICATION_REQUIRED_FOR_LOGIN", True) and not getattr(self.user, "is_verified", False):
+            raise AuthenticationFailed("Please verify your email before logging in.")
+        return data
+
+
+class ResendVerificationEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField()
