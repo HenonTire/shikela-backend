@@ -190,3 +190,101 @@ def resolve_badge(user, persist: bool = True) -> str:
         user.badge = badge
         user.save(update_fields=["badge", "updated_at"])
     return badge
+
+
+def _cap(value: float, maximum: int = 20) -> int:
+    return min(int(value), maximum)
+
+
+def _days_points(user) -> int:
+    created_at = getattr(user, "created_at", None)
+    if not created_at:
+        return 0
+    days = (timezone.now() - created_at).days
+    return _cap(days / 30)   # 1 point every 30 days
+
+
+def _activity_points(last_activity) -> int:
+    if not last_activity:
+        return 0
+    days = (timezone.now() - last_activity).days
+
+    if days <= 7:
+        return 20
+    if days <= 30:
+        return 15
+    if days <= 90:
+        return 10
+    if days <= 180:
+        return 5
+    return 0
+
+
+def _success_rate_points(success: int, failed: int) -> int:
+    total = success + failed
+    if total <= 0:
+        return 0
+    rate = success / total
+    return _cap(rate * 20)
+
+
+def _revenue_points(amount: Decimal) -> int:
+    return _cap(float(amount) / 100)
+
+
+def _count_points(count: int, divisor: int) -> int:
+    return _cap(count / divisor)
+
+
+def resolve_score(user, persist: bool = True) -> int:
+    role = getattr(user, "role", "CUSTOMER")
+    score = 0
+
+    if role == "CUSTOMER":
+        orders, spending, last = _customer_metrics(user)
+
+        score = (
+            _count_points(orders, 5)
+            + _revenue_points(spending)
+            + _days_points(user)
+            + _activity_points(last)
+        )
+
+    elif role == "SHOP_OWNER":
+        completed, revenue, success, failed, last = _shop_owner_metrics(user)
+
+        score = (
+            _count_points(completed, 20)
+            + _revenue_points(revenue)
+            + _success_rate_points(success, failed)
+            + _days_points(user)
+            + _activity_points(last)
+        )
+
+    elif role == "SUPPLIER":
+        units, revenue, success, failed, last = _supplier_metrics(user)
+
+        score = (
+            _count_points(units, 50)
+            + _revenue_points(revenue)
+            + _success_rate_points(success, failed)
+            + _days_points(user)
+            + _activity_points(last)
+        )
+
+    elif role == "COURIER":
+        deliveries, success, failed = _courier_metrics(user)
+
+        score = (
+            _count_points(deliveries, 10)
+            + _success_rate_points(success, failed)
+            + _days_points(user)
+        )
+
+    score = min(score, 100)
+
+    if persist and getattr(user, "score", None) != score:
+        user.score = score
+        user.save(update_fields=["score", "updated_at"])
+
+    return score

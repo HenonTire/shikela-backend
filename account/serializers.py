@@ -1,3 +1,5 @@
+import re
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
@@ -5,7 +7,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.serializers import ModelSerializer
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .badge_logic import resolve_badge
+from .badge_logic import resolve_badge, resolve_score
 from .models import *
 
 User = get_user_model()
@@ -13,13 +15,14 @@ User = get_user_model()
 class MerchantIdRepresentationMixin:
     def to_representation(self, instance):
         resolve_badge(instance, persist=True)
+        resolve_score(instance, persist=True)   
         return super().to_representation(instance)
 
 
 class UserSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','first_name', 'last_name', 'email', 'phone_number', 'location', 'badge', 'created_at', 'updated_at',  'password']
+        fields = ['id','first_name', 'last_name', 'email', 'phone_number', 'location', 'badge', 'score', 'created_at', 'updated_at',  'password']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
@@ -38,7 +41,7 @@ class UserSerializer(MerchantIdRepresentationMixin, ModelSerializer):
 class ShopOwnerSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','first_name', 'last_name', 'email', 'phone_number', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'password']
+        fields = ['id','first_name', 'last_name', 'email', 'phone_number', 'created_at', 'updated_at', 'badge', 'score',  'avatar', 'license_document', 'password']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
@@ -55,7 +58,7 @@ class ShopOwnerSerializer(MerchantIdRepresentationMixin, ModelSerializer):
 class SupplierSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','company_name',  'email', 'phone_number', 'location', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'policy', 'password', 'bank_account', 'bank_account_number']
+        fields = ['id','company_name',  'email', 'phone_number', 'location', 'created_at', 'updated_at', 'badge', 'score',  'avatar', 'license_document', 'policy', 'password', 'bank_account', 'bank_account_number']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
@@ -71,7 +74,7 @@ class SupplierSerializer(MerchantIdRepresentationMixin, ModelSerializer):
 class CourierSerializer(MerchantIdRepresentationMixin, ModelSerializer):
     class Meta:
         model = User
-        fields = ['id','company_name', 'email', 'phone_number', 'location', 'created_at', 'updated_at', 'badge',  'avatar', 'license_document', 'is_available', 'password']
+        fields = ['id','company_name', 'email', 'phone_number', 'location', 'created_at', 'updated_at', 'badge', 'score',  'avatar', 'license_document', 'is_available', 'password']
         extra_kwargs = {
             'password': {'write_only': True},}
         read_only_fields = ('id', 'created_at', 'updated_at')        
