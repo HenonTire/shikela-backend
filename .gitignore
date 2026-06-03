@@ -6,6 +6,7 @@ venv/
 .env.*
 .DS_Store
 .vscode/
+ARCHITECTURE.md
 
 # Logs and local runtime files
 *.log
@@ -20,6 +21,7 @@ venv/
 notifications/fcm/*firebase-adminsdk*.json
 notifications/fcm/service-account*.json
 notifications/fcm/private_key*.json
+notifications/fcm/google-services.json
 
 # Local secret config files
 secrets/
