@@ -4,8 +4,13 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
+!.env.docker
 .DS_Store
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
 ARCHITECTURE.md
 
 # Logs and local runtime files

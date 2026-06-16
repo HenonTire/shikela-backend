@@ -3,9 +3,11 @@
 from django.contrib import admin
 from django.urls import path, include
 
+from core.health import health_check
 
 
 urlpatterns = [
+    path("health/", health_check, name="health"),
     path("admin/", admin.site.urls),
     path('auth/', include('account.urls')),
     path('shops/', include('shop.urls')),

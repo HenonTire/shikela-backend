@@ -13,11 +13,18 @@ This project is configured to run with Docker for both local development and pro
 ### 1. Prepare Environment
 ```bash
 cp .env.docker .env
+# Or for local non-Docker development:
+# cp .env.example .env
 ```
 
 ### 2. Build and Start Services
 ```bash
-docker-compose up -d
+docker compose up -d
+```
+
+Optional nginx reverse proxy (port 8080 by default):
+```bash
+docker compose --profile nginx up -d
 ```
 
 This will:
