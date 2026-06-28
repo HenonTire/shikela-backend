@@ -127,6 +127,14 @@ class EmailVerificationTokenObtainPairSerializer(TokenObtainPairSerializer):
         data = super().validate(attrs)
         if getattr(settings, "EMAIL_VERIFICATION_REQUIRED_FOR_LOGIN", True) and not getattr(self.user, "is_verified", False):
             raise AuthenticationFailed("Please verify your email before logging in.")
+
+        data['user'] = {
+            'id': str(self.user.id),
+            'email': self.user.email,
+            'name': f"{self.user.first_name} {self.user.last_name}".strip(),
+            'shop_name': getattr(self.user, 'company_name', '') or '',
+            'role': getattr(self.user, 'role', ''),
+        }
         return data
 
 

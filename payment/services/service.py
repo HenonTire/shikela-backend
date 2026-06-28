@@ -4,20 +4,27 @@ from __future__ import annotations
 import os
 import uuid
 import time
+import logging
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import transaction, models
+from django.db import IntegrityError, transaction, models
+from django.utils import timezone
 
 from catalog.models import ProductVariant
+from courier.services import LogisticsError, create_shipment_for_order
+from analytics.services import AnalyticsService
+from marketer.services import MarketerCommissionService
+from notifications.services import NotificationService, NotificationTemplates
 from order.models import Order
-from payment.models import Earning, LedgerEntry, Payment, Refund, PayoutRequest
+from payment.models import Earning, LedgerEntry, Payment, Refund, PayoutRequest, WebhookLog
 from account.models import PaymentMethod
 from .santimpay_sdk import SantimpaySDK
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class PaymentServiceError(Exception):
@@ -221,6 +228,14 @@ class PaymentService:
         if not refund.provider_reference:
             raise PaymentServiceError("Refund has no transaction reference")
 
+        refund = (
+            Refund.objects.select_for_update()
+            .select_related("payment__order")
+            .get(pk=refund.pk)
+        )
+        if refund.status == Refund.Status.COMPLETED:
+            return {"status": "ALREADY_COMPLETED", "skipped": True}
+
         status_data = self.get_transaction_status(refund.provider_reference)
         gateway_status = self._extract_gateway_status(status_data)
 
@@ -256,13 +271,17 @@ class PaymentService:
         if not resolved_tx_id:
             raise PaymentServiceError("No transaction reference found for order")
 
-        status_data = self.get_transaction_status(resolved_tx_id)
-        gateway_status = self._extract_gateway_status(status_data)
+        order = Order.objects.select_for_update().get(pk=order.pk)
+        if order.status == Order.Status.PAID:
+            return {"status": "ALREADY_PAID", "skipped": True}
 
         # Use strict transitions
         payment = Payment.objects.select_for_update().filter(order=order, provider_reference=resolved_tx_id).first()
         if not payment:
             raise PaymentServiceError("Payment record not found")
+
+        status_data = self.get_transaction_status(resolved_tx_id)
+        gateway_status = self._extract_gateway_status(status_data)
 
         if gateway_status in {"SUCCESS", "COMPLETED", "PAID"}:
             if self._can_transition(payment.status, Payment.Status.COMPLETED):
@@ -282,6 +301,192 @@ class PaymentService:
                 order.save(update_fields=["status", "updated_at"])
 
         return status_data
+
+    def process_santimpay_webhook(self, webhook_log_id: int) -> None:
+        with transaction.atomic():
+            webhook_log = WebhookLog.objects.select_for_update().get(pk=webhook_log_id)
+            if webhook_log.processed:
+                return
+            webhook_log.processing_attempts = models.F("processing_attempts") + 1
+            webhook_log.save(update_fields=["processing_attempts"])
+            webhook_log.refresh_from_db(fields=["processing_attempts"])
+
+        tx_id = webhook_log.reference
+        try:
+            payment = (
+                Payment.objects.select_related("order__shop__owner", "order__user")
+                .filter(provider="SANTIMPAY", provider_reference=tx_id)
+                .first()
+            )
+            if payment:
+                self._process_payment_webhook(webhook_log.id, payment.id, tx_id)
+                return
+
+            refund = (
+                Refund.objects.select_related(
+                    "requested_by",
+                    "payment__user",
+                    "payment__order__shop__owner",
+                )
+                .filter(provider_reference=tx_id)
+                .first()
+            )
+            if refund:
+                self._process_refund_webhook(webhook_log.id, refund.id)
+                return
+
+            self._mark_webhook_failed(webhook_log.id, "NOT_FOUND", "Transaction not found")
+            logger.warning("SantimPay webhook transaction not found", extra={"tx_id": tx_id})
+        except Exception as exc:
+            self._mark_webhook_failed(webhook_log.id, "PROCESSING_FAILED", str(exc))
+            raise
+
+    def _process_payment_webhook(self, webhook_log_id: int, payment_id: uuid.UUID, tx_id: str) -> None:
+        with transaction.atomic():
+            payment = (
+                Payment.objects.select_for_update()
+                .select_related("order__shop__owner", "order__user")
+                .get(pk=payment_id)
+            )
+            order = Order.objects.select_for_update().get(pk=payment.order_id)
+            previous_order_status = order.status
+            self.sync_order_status(order, tx_id=tx_id)
+            order.refresh_from_db()
+            payment.refresh_from_db()
+
+            created_commissions = []
+            if previous_order_status != Order.Status.PAID and order.status == Order.Status.PAID:
+                created_commissions = MarketerCommissionService.create_pending_for_order(order)
+                self._send_payment_success_side_effects(order, created_commissions)
+            elif previous_order_status != Order.Status.CANCELLED and order.status == Order.Status.CANCELLED:
+                self._send_order_cancelled_notification(order)
+
+            self._mark_webhook_processed(webhook_log_id, "PAYMENT_SYNC")
+
+    def _process_refund_webhook(self, webhook_log_id: int, refund_id: uuid.UUID) -> None:
+        with transaction.atomic():
+            refund = (
+                Refund.objects.select_for_update()
+                .select_related("requested_by", "payment__user", "payment__order")
+                .get(pk=refund_id)
+            )
+            previous_refund_status = refund.status
+            self.sync_refund_status(refund)
+            refund.refresh_from_db()
+            if previous_refund_status != Refund.Status.COMPLETED and refund.status == Refund.Status.COMPLETED:
+                target_user = refund.requested_by or refund.payment.user
+                try:
+                    title, message, payload = NotificationTemplates.refund_completed(refund.payment.order, refund)
+                    NotificationService.notify(
+                        user=target_user,
+                        notification_type="refund_completed",
+                        title=title,
+                        message=message,
+                        payload=payload,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send refund_completed notification refund=%s order=%s",
+                        refund.id,
+                        refund.payment.order_id,
+                    )
+
+            self._mark_webhook_processed(webhook_log_id, "REFUND_SYNC")
+
+    def _send_payment_success_side_effects(self, order: Order, created_commissions: list[Any]) -> None:
+        try:
+            AnalyticsService.handle_payment_success(order)
+        except Exception:
+            logger.exception("Failed to update analytics for order=%s", order.id)
+        try:
+            title, message, payload = NotificationTemplates.payment_success(order)
+            NotificationService.notify(
+                user=order.user,
+                notification_type="payment_success",
+                title=title,
+                message=message,
+                payload=payload,
+            )
+        except Exception:
+            logger.exception("Failed to send payment_success notification order=%s", order.id)
+        try:
+            title, message, payload = NotificationTemplates.payment_confirmed(order)
+            NotificationService.notify(
+                user=order.shop.owner,
+                notification_type="payment_confirmed",
+                title=title,
+                message=message,
+                payload=payload,
+            )
+        except Exception:
+            logger.exception("Failed to send payment_confirmed notification order=%s", order.id)
+        try:
+            for item in order.items.select_related("product__supplier", "variant__product__supplier").all():
+                product = item.product if item.product else (item.variant.product if item.variant else None)
+                supplier = getattr(product, "supplier", None) if product else None
+                if not supplier:
+                    continue
+                title, message, payload = NotificationTemplates.product_sold(order, product)
+                NotificationService.notify(
+                    user=supplier,
+                    notification_type="product_sold",
+                    title=title,
+                    message=message,
+                    payload=payload,
+                )
+        except Exception:
+            logger.exception("Failed to send supplier product_sold notifications order=%s", order.id)
+        try:
+            for commission in created_commissions:
+                title, message, payload = NotificationTemplates.commission_created(order, commission)
+                NotificationService.notify(
+                    user=commission.contract.marketer,
+                    notification_type="commission_created",
+                    title=title,
+                    message=message,
+                    payload=payload,
+                )
+        except Exception:
+            logger.exception("Failed to send commission_created notifications order=%s", order.id)
+        if order.delivery_method == Order.DeliveryMethod.COURIER:
+            try:
+                create_shipment_for_order(order)
+            except LogisticsError:
+                logger.exception("Shipment creation failed for order=%s", order.id)
+
+    @staticmethod
+    def _send_order_cancelled_notification(order: Order) -> None:
+        try:
+            title, message, payload = NotificationTemplates.order_cancelled(order)
+            NotificationService.notify(
+                user=order.user,
+                notification_type="order_cancelled",
+                title=title,
+                message=message,
+                payload=payload,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send order_cancelled notification order=%s",
+                order.id,
+            )
+
+    @staticmethod
+    def _mark_webhook_processed(webhook_log_id: int, event_type: str) -> None:
+        WebhookLog.objects.filter(pk=webhook_log_id).update(
+            event_type=event_type,
+            processed=True,
+            error_message="",
+            processed_at=timezone.now(),
+        )
+
+    @staticmethod
+    def _mark_webhook_failed(webhook_log_id: int, event_type: str, error_message: str) -> None:
+        WebhookLog.objects.filter(pk=webhook_log_id).update(
+            event_type=event_type,
+            processed=False,
+            error_message=error_message[:2000],
+        )
 
     @transaction.atomic
     def prepare_split_settlement(self, payment: Payment) -> Dict[str, Any]:
@@ -427,48 +632,157 @@ class PaymentService:
         payment.save(update_fields=["metadata", "updated_at"])
         return settlement
 
+    @staticmethod
+    def get_earnings_dashboard(user: User) -> Dict[str, str]:
+        totals = Earning.objects.filter(user=user).aggregate(
+            total=models.Sum("amount"),
+            available=models.Sum("amount", filter=models.Q(status=Earning.Status.AVAILABLE)),
+            pending=models.Sum("amount", filter=models.Q(status=Earning.Status.PENDING_PAYOUT)),
+            withdrawn=models.Sum("amount", filter=models.Q(status=Earning.Status.PAID_OUT)),
+        )
+        return {
+            "total": str(PaymentService._money(PaymentService._to_decimal(totals["total"] or "0"))),
+            "available": str(PaymentService._money(PaymentService._to_decimal(totals["available"] or "0"))),
+            "pending": str(PaymentService._money(PaymentService._to_decimal(totals["pending"] or "0"))),
+            "withdrawn": str(PaymentService._money(PaymentService._to_decimal(totals["withdrawn"] or "0"))),
+        }
+
     @transaction.atomic
-    def request_total_user_payout(self, user: User) -> PayoutRequest:
+    def request_total_user_payout(
+        self,
+        user: User,
+        amount: Optional[Decimal] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> PayoutRequest:
+        normalized_key = (idempotency_key or "").strip() or None
+        if normalized_key:
+            existing = (
+                PayoutRequest.objects.select_for_update()
+                .filter(user=user, idempotency_key=normalized_key)
+                .first()
+            )
+            if existing:
+                logger.info(
+                    "Idempotent payout request reused",
+                    extra={"payout_request_id": str(existing.id), "user_id": str(user.id)},
+                )
+                return existing
+
         earnings = list(
             Earning.objects.select_for_update()
             .filter(user=user, status=Earning.Status.AVAILABLE)
-            .order_by("created_at")
+            .order_by("created_at", "id")
         )
         if not earnings:
             raise PaymentServiceError("No available earnings to payout")
 
-        total_amount = self._money(sum((self._to_decimal(e.amount) for e in earnings), Decimal("0.00")))
-        if total_amount <= Decimal("0.00"):
+        available_amount = self._money(sum((self._to_decimal(e.amount) for e in earnings), Decimal("0.00")))
+        requested_amount = self._money(self._to_decimal(amount)) if amount is not None else available_amount
+        if requested_amount <= Decimal("0.00"):
             raise PaymentServiceError("No available earnings to payout")
+        if requested_amount > available_amount:
+            raise PaymentServiceError("Payout amount exceeds available earnings")
 
-        payout_request = PayoutRequest.objects.create(
-            user=user,
-            payment=None,
-            order=None,
-            amount=total_amount,
-            status=PayoutRequest.Status.PROCESSING,
-            metadata={"earning_ids": [str(e.id) for e in earnings]},
+        selected_earnings: List[Earning] = []
+        running_total = Decimal("0.00")
+        for earning in earnings:
+            earning_amount = self._money(self._to_decimal(earning.amount))
+            if amount is not None and running_total + earning_amount > requested_amount:
+                raise PaymentServiceError("Partial payout amount must match whole earning records")
+            selected_earnings.append(earning)
+            running_total = self._money(running_total + earning_amount)
+            if running_total == requested_amount:
+                break
+
+        if running_total != requested_amount:
+            raise PaymentServiceError("Payout amount must match available earning records")
+
+        earning_ids = [e.id for e in selected_earnings]
+
+        try:
+            payout_request = PayoutRequest.objects.create(
+                user=user,
+                payment=None,
+                order=None,
+                amount=requested_amount,
+                status=PayoutRequest.Status.PROCESSING,
+                idempotency_key=normalized_key,
+                metadata={
+                    "earning_ids": [str(earning_id) for earning_id in earning_ids],
+                    "audit": [
+                        {
+                            "event": "PAYOUT_REQUESTED",
+                            "user_id": str(user.id),
+                            "at": timezone.now().isoformat(),
+                        }
+                    ],
+                },
+            )
+        except IntegrityError:
+            if not normalized_key:
+                raise
+            return PayoutRequest.objects.select_for_update().get(
+                user=user,
+                idempotency_key=normalized_key,
+            )
+
+        Earning.objects.filter(id__in=earning_ids).update(
+            status=Earning.Status.PENDING_PAYOUT,
+            payout_request=payout_request,
         )
+        logger.info(
+            "Payout request created",
+            extra={
+                "payout_request_id": str(payout_request.id),
+                "user_id": str(user.id),
+                "amount": str(requested_amount),
+            },
+        )
+
         try:
             payout_result = self._pay_user(
                 user=user,
-                amount=total_amount,
+                amount=requested_amount,
                 payment_reason="Total earnings payout",
                 tx_prefix="EARN",
             )
         except Exception as exc:
+            Earning.objects.filter(id__in=earning_ids).update(
+                status=Earning.Status.AVAILABLE,
+                payout_request=None,
+            )
             payout_request.status = PayoutRequest.Status.FAILED
-            payout_request.metadata = {"error": str(exc), "earning_ids": [str(e.id) for e in earnings]}
+            metadata = dict(payout_request.metadata or {})
+            metadata["error"] = str(exc)
+            metadata.setdefault("audit", []).append(
+                {
+                    "event": "PAYOUT_FAILED",
+                    "user_id": str(user.id),
+                    "at": timezone.now().isoformat(),
+                    "error": str(exc),
+                }
+            )
+            payout_request.metadata = metadata
             payout_request.save(update_fields=["status", "metadata", "updated_at"])
-            raise
+            logger.exception(
+                "Payout request failed",
+                extra={"payout_request_id": str(payout_request.id), "user_id": str(user.id)},
+            )
+            return payout_request
 
         payout_request.payout_method = payout_result.get("method", "")
         payout_request.payout_account = payout_result.get("account", "")
         payout_request.provider_reference = (payout_result.get("provider_response") or {}).get("id")
-        payout_request.metadata = {
-            "earning_ids": [str(e.id) for e in earnings],
-            "payout_result": payout_result,
-        }
+        metadata = dict(payout_request.metadata or {})
+        metadata["payout_result"] = payout_result
+        metadata.setdefault("audit", []).append(
+            {
+                "event": "PAYOUT_COMPLETED",
+                "user_id": str(user.id),
+                "at": timezone.now().isoformat(),
+            }
+        )
+        payout_request.metadata = metadata
         payout_request.status = PayoutRequest.Status.COMPLETED
         payout_request.save(
             update_fields=[
@@ -477,13 +791,22 @@ class PaymentService:
                 "provider_reference",
                 "metadata",
                 "status",
+                "idempotency_key",
                 "updated_at",
             ]
         )
 
-        Earning.objects.filter(id__in=[e.id for e in earnings]).update(
+        Earning.objects.filter(id__in=earning_ids).update(
             status=Earning.Status.PAID_OUT,
             payout_request=payout_request,
+        )
+        logger.info(
+            "Payout request completed",
+            extra={
+                "payout_request_id": str(payout_request.id),
+                "user_id": str(user.id),
+                "provider_reference": payout_request.provider_reference,
+            },
         )
         return payout_request
 

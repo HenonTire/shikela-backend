@@ -1,15 +1,20 @@
+import json
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from unittest.mock import Mock, patch
 
-from django.test import TestCase, override_settings
+from django.db import close_old_connections
+from django.test import TestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
 
 from account.models import User
 from catalog.models import Category, Product, ProductVariant
 from order.models import Order, OrderItem
-from payment.models import Earning, Payment, Refund
+from payment.models import Earning, Payment, Refund, WebhookLog
 from payment.services.service import PaymentService, PaymentServiceError
 from payment.services.santimpay_sdk import SantimpaySDK
+from payment.tasks import process_santimpay_webhook
+from payment.webhooks import build_santimpay_signature
 from shop.models import Shop
 
 
@@ -148,8 +153,11 @@ class PayoutRequestTests(TestCase):
 @override_settings(
     SANTIMPAY_PRIVATE_KEY="dummy-private-key",
     SANTIMPAY_MERCHANT_ID="TEST-MERCHANT-ID",
+    SANTIMPAY_WEBHOOK_SECRET="test-webhook-secret",
     SANTIMPAY_TEST_BED=True,
     SANTIMPAY_NOTIFY_URL="http://localhost:8000/payment/webhook/santimpay/",
+    CELERY_TASK_ALWAYS_EAGER=True,
+    CELERY_TASK_EAGER_PROPAGATES=True,
 )
 class PaymentLifecycleLogicTests(TestCase):
     def setUp(self):
@@ -213,6 +221,16 @@ class PaymentLifecycleLogicTests(TestCase):
         )
         self.service = PaymentService(merchant_id="TEST-MERCHANT-ID")
 
+    def post_signed_webhook(self, payload):
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = build_santimpay_signature(body, "test-webhook-secret")
+        return self.client.post(
+            "/payment/webhook/santimpay/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_SANTIMPAY_SIGNATURE=f"sha256={signature}",
+        )
+
     def test_transition_matrix_allows_direct_pending_completion_and_failure(self):
         self.assertTrue(self.service._can_transition("PENDING", "COMPLETED"))
         self.assertTrue(self.service._can_transition("PENDING", "FAILED"))
@@ -269,16 +287,12 @@ class PaymentLifecycleLogicTests(TestCase):
         self.assertEqual(self.payment.status, Payment.Status.FAILED)
         self.assertEqual(self.order.status, Order.Status.PAID)
 
-    @patch("payment.views.NotificationService.notify")
+    @patch("payment.services.service.NotificationService.notify")
     @patch("payment.services.service.PaymentService.get_transaction_status")
     def test_webhook_sends_order_cancelled_notification_on_failed_sync(self, mock_status, mock_notify):
         mock_status.return_value = {"status": "FAILED"}
 
-        response = self.client.post(
-            "/payment/webhook/santimpay/",
-            {"id": self.payment.provider_reference},
-            format="json",
-        )
+        response = self.post_signed_webhook({"id": self.payment.provider_reference})
 
         self.assertEqual(response.status_code, 200, response.content)
         self.order.refresh_from_db()
@@ -287,7 +301,7 @@ class PaymentLifecycleLogicTests(TestCase):
             any(call.kwargs.get("notification_type") == "order_cancelled" for call in mock_notify.call_args_list)
         )
 
-    @patch("payment.views.NotificationService.notify")
+    @patch("payment.services.service.NotificationService.notify")
     @patch("payment.services.service.PaymentService.get_transaction_status")
     def test_webhook_sends_refund_completed_notification(self, mock_status, mock_notify):
         refund = Refund.objects.create(
@@ -300,11 +314,7 @@ class PaymentLifecycleLogicTests(TestCase):
         )
         mock_status.return_value = {"status": "SUCCESS"}
 
-        response = self.client.post(
-            "/payment/webhook/santimpay/",
-            {"id": refund.provider_reference},
-            format="json",
-        )
+        response = self.post_signed_webhook({"id": refund.provider_reference})
 
         self.assertEqual(response.status_code, 200, response.content)
         refund.refresh_from_db()
@@ -312,6 +322,100 @@ class PaymentLifecycleLogicTests(TestCase):
         self.assertTrue(
             any(call.kwargs.get("notification_type") == "refund_completed" for call in mock_notify.call_args_list)
         )
+
+    @patch("payment.services.service.PaymentService.get_transaction_status")
+    def test_valid_webhook_queues_and_processes_payment(self, mock_status):
+        mock_status.return_value = {"status": "SUCCESS"}
+
+        response = self.post_signed_webhook({"event_id": "evt-valid-1", "id": self.payment.provider_reference})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.order.refresh_from_db()
+        self.payment.refresh_from_db()
+        webhook_log = WebhookLog.objects.get(event_id="evt-valid-1")
+        self.assertEqual(self.order.status, Order.Status.PAID)
+        self.assertEqual(self.payment.status, Payment.Status.COMPLETED)
+        self.assertTrue(webhook_log.processed)
+
+    @patch("payment.services.service.PaymentService.get_transaction_status")
+    def test_duplicate_webhook_is_ignored_without_second_processing(self, mock_status):
+        mock_status.return_value = {"status": "SUCCESS"}
+        payload = {"event_id": "evt-duplicate-1", "id": self.payment.provider_reference}
+
+        first_response = self.post_signed_webhook(payload)
+        second_response = self.post_signed_webhook(payload)
+
+        self.assertEqual(first_response.status_code, 200, first_response.content)
+        self.assertEqual(second_response.status_code, 200, second_response.content)
+        self.assertEqual(WebhookLog.objects.filter(event_id="evt-duplicate-1").count(), 1)
+        self.assertEqual(mock_status.call_count, 1)
+
+    @patch("payment.tasks.process_santimpay_webhook.delay")
+    def test_webhook_returns_after_queueing_task(self, mock_delay):
+        response = self.post_signed_webhook({"event_id": "evt-queued-1", "id": self.payment.provider_reference})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(mock_delay.call_count, 1)
+        self.assertEqual(WebhookLog.objects.get(event_id="evt-queued-1").processed, False)
+
+    @patch("payment.services.service.PaymentService.get_transaction_status")
+    def test_invalid_signature_rejects_without_processing(self, mock_status):
+        body = json.dumps({"event_id": "evt-invalid-sig", "id": self.payment.provider_reference}).encode("utf-8")
+        response = self.client.post(
+            "/payment/webhook/santimpay/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_SANTIMPAY_SIGNATURE="sha256=bad",
+        )
+
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertFalse(WebhookLog.objects.filter(event_id="evt-invalid-sig").exists())
+        self.assertEqual(mock_status.call_count, 0)
+
+    def test_malformed_payload_is_rejected_gracefully_after_signature_verification(self):
+        body = b"{not-json"
+        signature = build_santimpay_signature(body, "test-webhook-secret")
+
+        response = self.client.post(
+            "/payment/webhook/santimpay/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_SANTIMPAY_SIGNATURE=f"sha256={signature}",
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertTrue(WebhookLog.objects.filter(event_type="MALFORMED_PAYLOAD").exists())
+
+    @patch("payment.services.service.NotificationService.notify")
+    @patch("payment.services.service.PaymentService.get_transaction_status")
+    def test_already_paid_order_does_not_trigger_duplicate_side_effects(self, mock_status, mock_notify):
+        self.order.status = Order.Status.PAID
+        self.order.save(update_fields=["status", "updated_at"])
+        mock_status.return_value = {"status": "SUCCESS"}
+
+        response = self.post_signed_webhook({"event_id": "evt-paid-1", "id": self.payment.provider_reference})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(mock_status.call_count, 0)
+        self.assertEqual(mock_notify.call_count, 0)
+
+    @patch("payment.services.service.PaymentService.get_transaction_status")
+    def test_celery_task_execution_processes_existing_webhook_log(self, mock_status):
+        mock_status.return_value = {"status": "SUCCESS"}
+        webhook_log = WebhookLog.objects.create(
+            provider="SANTIMPAY",
+            event_type="RECEIVED",
+            event_id="evt-task-1",
+            reference=self.payment.provider_reference,
+            payload={"id": self.payment.provider_reference},
+        )
+
+        process_santimpay_webhook(webhook_log.id)
+
+        self.order.refresh_from_db()
+        webhook_log.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.PAID)
+        self.assertTrue(webhook_log.processed)
 
     def test_prepare_and_settle_split_payout_blocked_before_delivery(self):
         self.payment.status = Payment.Status.COMPLETED
@@ -335,6 +439,46 @@ class PaymentLifecycleLogicTests(TestCase):
         self.order.status = Order.Status.DELIVERED
         self.order.save(update_fields=["status", "updated_at"])
         self.assertGreater(Earning.objects.filter(payment=self.payment).count(), 0)
+
+
+@override_settings(
+    SANTIMPAY_PRIVATE_KEY="dummy-private-key",
+    SANTIMPAY_MERCHANT_ID="TEST-MERCHANT-ID",
+    SANTIMPAY_WEBHOOK_SECRET="test-webhook-secret",
+    SANTIMPAY_TEST_BED=True,
+    SANTIMPAY_NOTIFY_URL="http://localhost:8000/payment/webhook/santimpay/",
+)
+class SantimPayWebhookConcurrencyTests(TransactionTestCase):
+    def signed_body_and_header(self, payload):
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = build_santimpay_signature(body, "test-webhook-secret")
+        return body, f"sha256={signature}"
+
+    @patch("payment.tasks.process_santimpay_webhook.delay")
+    def test_concurrent_duplicate_webhook_requests_create_single_log(self, mock_delay):
+        body, signature = self.signed_body_and_header(
+            {"event_id": "evt-concurrent-1", "id": "TXN-CONCURRENT-1"}
+        )
+
+        def post_webhook():
+            close_old_connections()
+            client = APIClient()
+            try:
+                return client.post(
+                    "/payment/webhook/santimpay/",
+                    data=body,
+                    content_type="application/json",
+                    HTTP_X_SANTIMPAY_SIGNATURE=signature,
+                ).status_code
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(lambda _: post_webhook(), range(2)))
+
+        self.assertEqual(statuses, [200, 200])
+        self.assertEqual(WebhookLog.objects.filter(event_id="evt-concurrent-1").count(), 1)
+        self.assertEqual(mock_delay.call_count, 1)
 
 
 class SantimPaySdkSignerTests(TestCase):
@@ -365,4 +509,3 @@ class SantimPaySdkSignerTests(TestCase):
             mock_post.call_args.kwargs["json"]["paymentReason"],
             "Payment for a coffee",
         )
-

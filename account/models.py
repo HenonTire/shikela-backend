@@ -111,7 +111,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_available = models.BooleanField(default=True)
     # Trust system
     rating = models.FloatField(default=0.0)
-    total_jobs = models.PositiveIntegerField(default=0)
+    total_jobs = models.PositiveIntegerField(default=0),
+    score = models.PositiveBigIntegerField(default=0)
 
 
     objects = UserManager()

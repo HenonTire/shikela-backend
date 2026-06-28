@@ -50,18 +50,31 @@ class PayoutRequestSerializer(serializers.ModelSerializer):
             "payout_method",
             "payout_account",
             "provider_reference",
+            "idempotency_key",
             "metadata",
             "created_at",
             "updated_at",
         ]
+        read_only_fields = fields
 
 
 class PayoutCreateSerializer(serializers.Serializer):
     confirm = serializers.BooleanField(default=True)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    idempotency_key = serializers.CharField(
+        max_length=150,
+        allow_blank=True,
+        required=False,
+    )
 
     def validate(self, attrs):
         if attrs.get("confirm") is not True:
             raise serializers.ValidationError("confirm must be true")
+        amount = attrs.get("amount")
+        if amount is not None and amount <= 0:
+            raise serializers.ValidationError("amount must be greater than 0")
+        idempotency_key = (attrs.get("idempotency_key") or "").strip()
+        attrs["idempotency_key"] = idempotency_key or None
         return attrs
 
 

@@ -2,6 +2,7 @@
 
 import uuid
 from django.db import models
+from django.db.models import Q
 from django.conf import settings
 from order.models import Order
 
@@ -114,16 +115,27 @@ class WebhookLog(models.Model):
     provider = models.CharField(max_length=50)
     event_type = models.CharField(max_length=100)
 
+    event_id = models.CharField(max_length=255, blank=True, null=True)
     reference = models.CharField(max_length=150)
     payload = models.JSONField()
 
     processed = models.BooleanField(default=False)
     processing_attempts = models.IntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    processed_at = models.DateTimeField(blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "event_id"],
+                condition=Q(event_id__isnull=False),
+                name="uniq_payment_webhook_provider_event_id",
+            ),
+        ]
         indexes = [
+            models.Index(fields=["provider", "event_id"]),
             models.Index(fields=["reference"]),
             models.Index(fields=["processed"]),
         ]
@@ -187,15 +199,24 @@ class PayoutRequest(models.Model):
     payout_method = models.CharField(max_length=30, blank=True)
     payout_account = models.CharField(max_length=150, blank=True)
     provider_reference = models.CharField(max_length=150, blank=True, null=True)
+    idempotency_key = models.CharField(max_length=150, blank=True, null=True)
 
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "idempotency_key"],
+                condition=Q(idempotency_key__isnull=False),
+                name="uniq_payout_user_idempotency_key",
+            ),
+        ]
         indexes = [
             models.Index(fields=["status"]),
             models.Index(fields=["provider_reference"]),
+            models.Index(fields=["user", "status"]),
         ]
 
 
@@ -203,6 +224,7 @@ class Earning(models.Model):
 
     class Status(models.TextChoices):
         AVAILABLE = "AVAILABLE", "Available"
+        PENDING_PAYOUT = "PENDING_PAYOUT", "Pending Payout"
         PAID_OUT = "PAID_OUT", "Paid Out"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -230,5 +252,6 @@ class Earning(models.Model):
         unique_together = ("user", "payment")
         indexes = [
             models.Index(fields=["status"]),
+            models.Index(fields=["user", "status"]),
             models.Index(fields=["merchant_id_snapshot"]),
         ]

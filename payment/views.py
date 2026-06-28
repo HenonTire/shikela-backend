@@ -1,19 +1,22 @@
-# payments/views/webhook.py
-import json
 import logging
-from decimal import Decimal
 from django.conf import settings
-from django.db import transaction
+from django.db.models import Q
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest, JsonResponse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, status
+from rest_framework.generics import ListAPIView
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAdminUser
 
+from analytics.services import AnalyticsService
+
 from .serializers import (
+    EarningSerializer,
     PayoutCreateSerializer,
     PayoutRequestSerializer,
     RefundSerializer,
@@ -21,7 +24,6 @@ from .serializers import (
 )
 from django.shortcuts import get_object_or_404
 
-from courier.services import create_shipment_for_order, LogisticsError
 from order.models import Order
 from payment.models import Earning, Payment, PayoutRequest, Refund, WebhookLog
 from payment.services.service import (
@@ -30,9 +32,17 @@ from payment.services.service import (
     PaymentService,
     PaymentServiceError,
 )
-from marketer.services import MarketerCommissionService
-from notifications.services import NotificationService, NotificationTemplates
-from analytics.services import AnalyticsService
+from payment.webhooks import (
+    WebhookConfigurationError,
+    WebhookPayloadError,
+    WebhookSignatureError,
+    extract_santimpay_event_id,
+    extract_santimpay_reference,
+    get_santimpay_webhook_secret,
+    get_webhook_signature,
+    parse_webhook_payload,
+    verify_santimpay_signature,
+)
 
 
 def _get_platform_merchant_id() -> str:
@@ -40,6 +50,12 @@ def _get_platform_merchant_id() -> str:
     if not merchant_id:
         raise PaymentServiceError("SANTIMPAY_MERCHANT_ID is required for payment")
     return merchant_id
+
+
+class PaymentPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
 
 
 class DirectPaymentView(APIView):
@@ -232,13 +248,15 @@ class PayoutRequestView(APIView):
     def post(self, request):
         serializer = PayoutCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        has_available = Earning.objects.filter(user=request.user, status=Earning.Status.AVAILABLE).exists()
-        if not has_available:
-            return Response({"detail": "No available earnings to payout"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             merchant_id = _get_platform_merchant_id()
             service = PaymentService(merchant_id=merchant_id)
-            payout_request = service.request_total_user_payout(user=request.user)
+            payout_request = service.request_total_user_payout(
+                user=request.user,
+                amount=serializer.validated_data.get("amount"),
+                idempotency_key=serializer.validated_data.get("idempotency_key")
+                or request.headers.get("Idempotency-Key"),
+            )
         except PaymentServiceError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except PaymentGatewayError as exc:
@@ -246,25 +264,79 @@ class PayoutRequestView(APIView):
         except Exception as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return Response(PayoutRequestSerializer(payout_request).data, status=status.HTTP_201_CREATED)
+        response_status = (
+            status.HTTP_400_BAD_REQUEST
+            if payout_request.status == PayoutRequest.Status.FAILED
+            else status.HTTP_201_CREATED
+        )
+        return Response(PayoutRequestSerializer(payout_request).data, status=response_status)
 
 
-class PayoutHistoryView(APIView):
+class EarningsDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        if request.user.is_staff:
+        return Response(PaymentService.get_earnings_dashboard(request.user))
+
+
+class EarningsHistoryView(ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = EarningSerializer
+    pagination_class = PaymentPagination
+
+    def get_queryset(self):
+        queryset = (
+            Earning.objects.select_related("payment", "order", "payout_request", "user")
+            .filter(user=self.request.user)
+            .order_by("-created_at")
+        )
+        status_filter = (self.request.query_params.get("status") or "").strip().upper()
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        role = (self.request.query_params.get("role") or "").strip()
+        if role:
+            queryset = queryset.filter(role__icontains=role)
+        search = (self.request.query_params.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(order__order_number__icontains=search)
+                | Q(payment__provider_reference__icontains=search)
+                | Q(role__icontains=search)
+            )
+        return queryset
+
+
+class PayoutHistoryView(ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = PayoutRequestSerializer
+    pagination_class = PaymentPagination
+
+    def get_queryset(self):
+        if self.request.user.is_staff:
             queryset = PayoutRequest.objects.select_related("payment", "order", "user").all().order_by("-created_at")
         else:
-            queryset = PayoutRequest.objects.select_related("payment", "order").filter(user=request.user).order_by("-created_at")
-        data = PayoutRequestSerializer(queryset, many=True).data
-        summary_qs = Earning.objects.filter(user=request.user, status=Earning.Status.AVAILABLE) if not request.user.is_staff else Earning.objects.filter(status=Earning.Status.AVAILABLE)
-        available_total = sum((e.amount for e in summary_qs), Decimal("0.00"))
+            queryset = PayoutRequest.objects.select_related("payment", "order").filter(user=self.request.user).order_by("-created_at")
+        status_filter = (self.request.query_params.get("status") or "").strip().upper()
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        search = (self.request.query_params.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(provider_reference__icontains=search)
+                | Q(payout_method__icontains=search)
+                | Q(payout_account__icontains=search)
+                | Q(user__email__icontains=search)
+            )
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
         return Response(
             {
-                "available_earnings": str(available_total),
-                "history": data,
-            }
+                "summary": PaymentService.get_earnings_dashboard(request.user),
+                "history": response.data,
+            },
+            status=response.status_code,
         )
 
 
@@ -284,209 +356,76 @@ class SantimPayWebhookView(View):
         return JsonResponse({"info": "SantimPay Webhook endpoint, POST only"})
 
     def post(self, request: HttpRequest):
-        webhook_log = None
-
-        # Parse JSON
-        try:
-            payload = json.loads(request.body)
-        except json.JSONDecodeError:
-            logger.error("SantimPay webhook invalid JSON: %s", request.body)
-            WebhookLog.objects.create(
-                provider="SANTIMPAY",
-                event_type="INVALID_JSON",
-                reference="INVALID_JSON",
-                payload={"raw_body": request.body.decode("utf-8", errors="replace")},
-                processed=False,
-                processing_attempts=1,
-            )
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-        logger.info("SantimPay webhook received: %s", payload)
-
-        # Extract transaction ID
-        tx_id = payload.get("id")
-        if not tx_id:
-            logger.warning("SantimPay webhook missing transaction ID")
-            WebhookLog.objects.create(
-                provider="SANTIMPAY",
-                event_type="MISSING_TX_ID",
-                reference="MISSING_TX_ID",
-                payload=payload,
-                processed=False,
-                processing_attempts=1,
-            )
-            return JsonResponse({"error": "Missing transaction ID"}, status=400)
-
-        webhook_log = WebhookLog.objects.create(
-            provider="SANTIMPAY",
-            event_type="RECEIVED",
-            reference=tx_id,
-            payload=payload,
-            processed=False,
-            processing_attempts=1,
+        raw_body = request.body
+        logger.info(
+            "SantimPay webhook received",
+            extra={"content_length": len(raw_body)},
         )
 
-        # Try to sync Payment first
-        payment = Payment.objects.filter(provider_reference=tx_id).select_related("order__shop__owner").first()
-        if payment:
-            try:
-                webhook_log.event_type = "PAYMENT_SYNC"
-                merchant_id = _get_platform_merchant_id()
-                service = PaymentService(merchant_id=merchant_id)
-                with transaction.atomic():
-                    order = payment.order
-                    previous_order_status = order.status
-                    service.sync_order_status(order, tx_id=tx_id)
-                    order.refresh_from_db(fields=["status"])
-                    payment.refresh_from_db(fields=["status", "metadata"])
+        try:
+            signature = get_webhook_signature(request)
+            secret = get_santimpay_webhook_secret()
+        except WebhookSignatureError:
+            logger.warning("SantimPay webhook signature missing")
+            return JsonResponse({"error": "Missing signature"}, status=401)
+        except WebhookConfigurationError:
+            logger.exception("SantimPay webhook secret is not configured")
+            return JsonResponse({"error": "Webhook verification unavailable"}, status=500)
 
-                    if previous_order_status != Order.Status.PAID and order.status == Order.Status.PAID:
-                        created_commissions = MarketerCommissionService.create_pending_for_order(order)
-                        try:
-                            AnalyticsService.handle_payment_success(order)
-                        except Exception:
-                            logger.exception("Failed to update analytics for order=%s", order.id)
-                        try:
-                            title, message, payload = NotificationTemplates.payment_success(order)
-                            NotificationService.notify(
-                                user=order.user,
-                                notification_type="payment_success",
-                                title=title,
-                                message=message,
-                                payload=payload,
-                            )
-                        except Exception:
-                            logger.exception("Failed to send payment_success notification order=%s", order.id)
-                        try:
-                            title, message, payload = NotificationTemplates.payment_confirmed(order)
-                            NotificationService.notify(
-                                user=order.shop.owner,
-                                notification_type="payment_confirmed",
-                                title=title,
-                                message=message,
-                                payload=payload,
-                            )
-                        except Exception:
-                            logger.exception("Failed to send payment_confirmed notification order=%s", order.id)
-                        try:
-                            for item in order.items.select_related("product__supplier", "variant__product__supplier").all():
-                                product = item.product if item.product else (item.variant.product if item.variant else None)
-                                supplier = getattr(product, "supplier", None) if product else None
-                                if not supplier:
-                                    continue
-                                title, message, payload = NotificationTemplates.product_sold(order, product)
-                                NotificationService.notify(
-                                    user=supplier,
-                                    notification_type="product_sold",
-                                    title=title,
-                                    message=message,
-                                    payload=payload,
-                                )
-                        except Exception:
-                            logger.exception("Failed to send supplier product_sold notifications order=%s", order.id)
-                        try:
-                            for commission in created_commissions:
-                                title, message, payload = NotificationTemplates.commission_created(order, commission)
-                                NotificationService.notify(
-                                    user=commission.contract.marketer,
-                                    notification_type="commission_created",
-                                    title=title,
-                                    message=message,
-                                    payload=payload,
-                                )
-                        except Exception:
-                            logger.exception("Failed to send commission_created notifications order=%s", order.id)
-                        if order.delivery_method == Order.DeliveryMethod.COURIER:
-                            try:
-                                create_shipment_for_order(order)
-                            except LogisticsError:
-                                logger.exception("Shipment creation failed for order=%s", order.id)
-                    elif previous_order_status != Order.Status.CANCELLED and order.status == Order.Status.CANCELLED:
-                        try:
-                            title, message, payload = NotificationTemplates.order_cancelled(order)
-                            NotificationService.notify(
-                                user=order.user,
-                                notification_type="order_cancelled",
-                                title=title,
-                                message=message,
-                                payload=payload,
-                            )
-                        except Exception:
-                            logger.exception("Failed to send order_cancelled notification order=%s", order.id)
-                webhook_log.processed = True
-                webhook_log.save(update_fields=["event_type", "processed"])
-                logger.info("Payment synced successfully: tx_id=%s", tx_id)
-            except PaymentGatewayError as e:
-                webhook_log.event_type = "PAYMENT_SYNC_FAILED"
-                webhook_log.save(update_fields=["event_type"])
-                logger.exception("Gateway error while syncing payment tx_id=%s: %s", tx_id, str(e))
-                return JsonResponse({"error": str(e)}, status=502)
-            except PaymentServiceError as e:
-                webhook_log.event_type = "PAYMENT_SYNC_FAILED"
-                webhook_log.save(update_fields=["event_type"])
-                logger.exception("Payment sync failed for tx_id=%s: %s", tx_id, str(e))
-                return JsonResponse({"error": str(e)}, status=400)
-            except Exception as e:
-                webhook_log.event_type = "PAYMENT_SYNC_FAILED"
-                webhook_log.save(update_fields=["event_type"])
-                logger.exception("Stock update failed for payment tx_id=%s: %s", tx_id, str(e))
-                return JsonResponse({"error": str(e)}, status=409)
-            return JsonResponse({"status": "payment synced"}, status=200)
+        if not verify_santimpay_signature(raw_body, signature, secret):
+            logger.warning("SantimPay webhook signature verification failed")
+            return JsonResponse({"error": "Invalid signature"}, status=403)
 
-        # Try to sync Refund
-        refund = Refund.objects.filter(provider_reference=tx_id).select_related(
-            "requested_by",
-            "payment__user",
-            "payment__order__shop__owner",
-        ).first()
-        if refund:
-            try:
-                webhook_log.event_type = "REFUND_SYNC"
-                merchant_id = _get_platform_merchant_id()
-                service = PaymentService(merchant_id=merchant_id)
-                with transaction.atomic():
-                    previous_refund_status = refund.status
-                    service.sync_refund_status(refund)
-                    refund.refresh_from_db(fields=["status", "amount", "reason", "requested_by"])
-                    if previous_refund_status != Refund.Status.COMPLETED and refund.status == Refund.Status.COMPLETED:
-                        target_user = refund.requested_by or refund.payment.user
-                        try:
-                            title, message, payload = NotificationTemplates.refund_completed(refund.payment.order, refund)
-                            NotificationService.notify(
-                                user=target_user,
-                                notification_type="refund_completed",
-                                title=title,
-                                message=message,
-                                payload=payload,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "Failed to send refund_completed notification refund=%s order=%s",
-                                refund.id,
-                                refund.payment.order_id,
-                            )
-                webhook_log.processed = True
-                webhook_log.save(update_fields=["event_type", "processed"])
-                logger.info("Refund synced successfully: tx_id=%s", tx_id)
-            except PaymentGatewayError as e:
-                webhook_log.event_type = "REFUND_SYNC_FAILED"
-                webhook_log.save(update_fields=["event_type"])
-                logger.exception("Gateway error while syncing refund tx_id=%s: %s", tx_id, str(e))
-                return JsonResponse({"error": str(e)}, status=502)
-            except PaymentServiceError as e:
-                webhook_log.event_type = "REFUND_SYNC_FAILED"
-                webhook_log.save(update_fields=["event_type"])
-                logger.exception("Refund sync failed for tx_id=%s: %s", tx_id, str(e))
-                return JsonResponse({"error": str(e)}, status=400)
-            except Exception:
-                webhook_log.event_type = "REFUND_SYNC_FAILED"
-                webhook_log.save(update_fields=["event_type"])
-                logger.exception("Unexpected error syncing refund tx_id=%s", tx_id)
-                return JsonResponse({"error": "Unexpected refund sync error"}, status=500)
-            return JsonResponse({"status": "refund synced"}, status=200)
+        logger.info("SantimPay webhook signature verification succeeded")
 
-        # Transaction not found
-        webhook_log.event_type = "NOT_FOUND"
-        webhook_log.save(update_fields=["event_type"])
-        logger.warning("SantimPay webhook transaction not found: tx_id=%s", tx_id)
-        return JsonResponse({"error": "Transaction not found"}, status=404)
+        try:
+            payload = parse_webhook_payload(raw_body)
+            event_id = extract_santimpay_event_id(payload)
+            tx_id = extract_santimpay_reference(payload)
+        except WebhookPayloadError as exc:
+            logger.warning("SantimPay webhook malformed payload: %s", str(exc))
+            WebhookLog.objects.create(
+                provider="SANTIMPAY",
+                event_type="MALFORMED_PAYLOAD",
+                event_id=None,
+                reference="MALFORMED_PAYLOAD",
+                payload={"error": str(exc)},
+                processed=False,
+                processing_attempts=0,
+            )
+            return JsonResponse({"error": str(exc)}, status=400)
+
+        try:
+            with transaction.atomic():
+                webhook_log = WebhookLog.objects.create(
+                    provider="SANTIMPAY",
+                    event_type="RECEIVED",
+                    event_id=event_id,
+                    reference=tx_id,
+                    payload=payload,
+                    processed=False,
+                    processing_attempts=0,
+                )
+        except IntegrityError:
+            logger.info(
+                "Duplicate SantimPay webhook ignored",
+                extra={"event_id": event_id, "tx_id": tx_id},
+            )
+            return JsonResponse({"status": "duplicate ignored"}, status=200)
+
+        from payment.tasks import process_santimpay_webhook
+
+        try:
+            process_santimpay_webhook.delay(webhook_log.id)
+        except Exception:
+            logger.exception(
+                "Failed to queue SantimPay webhook",
+                extra={"webhook_log_id": webhook_log.id, "event_id": event_id, "tx_id": tx_id},
+            )
+            return JsonResponse({"error": "Webhook processing unavailable"}, status=503)
+
+        logger.info(
+            "SantimPay webhook queued",
+            extra={"webhook_log_id": webhook_log.id, "event_id": event_id, "tx_id": tx_id},
+        )
+        return JsonResponse({"status": "accepted"}, status=200)

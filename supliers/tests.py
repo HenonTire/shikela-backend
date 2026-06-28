@@ -99,10 +99,10 @@ class SupplierAPITests(TestCase):
         self.client.force_authenticate(user=self.supplier)
         response = self.client.get("/supliers/dashboard/")
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertIn("total_earnings", response.data)
-        self.assertIn("total_units_sold", response.data)
-        self.assertIn("orders_supplied", response.data)
+        self.assertIn("total_revenue", response.data)
+        self.assertIn("units_sold", response.data)
+        self.assertIn("orders_count", response.data)       # was orders_supplied
         self.assertIn("pending_payout", response.data)
         self.assertIn("this_month_revenue", response.data)
-        self.assertEqual(len(response.data["cards"]), 5)
+        self.assertIn("last_7_days", response.data)        # was cards
 

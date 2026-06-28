@@ -5,6 +5,8 @@ from .views import *
 urlpatterns = [
     path("direct/", DirectPaymentView.as_view(), name="direct-payment"),
     path("webhook/santimpay/", SantimPayWebhookView.as_view(), name="santimpay-webhook"),
+    path("earnings/dashboard/", EarningsDashboardView.as_view(), name="earnings-dashboard"),
+    path("earnings/history/", EarningsHistoryView.as_view(), name="earnings-history"),
     path("payouts/request/", PayoutRequestView.as_view(), name="payout-request"),
     path("payouts/history/", PayoutHistoryView.as_view(), name="payout-history"),
     # Refunds

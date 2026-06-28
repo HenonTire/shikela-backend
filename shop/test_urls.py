@@ -1,4 +1,4 @@
-canimport os
+import os
 from pathlib import Path
 
 import requests

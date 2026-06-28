@@ -6,6 +6,8 @@ import glob
 from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-a5mnheq-h^(s0si(td8&-+g47bnk9q+lxf0t-kk=2n%fn0dn_f")
@@ -16,13 +18,15 @@ DEBUG = os.getenv("DEBUG", "true").lower() in {"1", "true", "yes", "on"}
 ALLOWED_HOSTS = [host.strip() for host in os.getenv("ALLOWED_HOSTS", "").split(",") if host.strip()]
 if DEBUG and not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
-
+if DEBUG:
+    ALLOWED_HOSTS.append(".ngrok-free.app")
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
     if origin.strip()
 ]
-
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS.append("https://*.ngrok-free.app")
 
 
 INSTALLED_APPS = [
