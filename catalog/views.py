@@ -1,5 +1,5 @@
 from rest_framework import permissions
-from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView, CreateAPIView, get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -33,6 +33,13 @@ class RankedProductListView(ListAPIView):
             shop_id=self.request.query_params.get("shop_id"),
         )
 
+class ProductMediaUploadView(CreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ProductMediaSerializer
+
+    def perform_create(self, serializer):
+        product = get_object_or_404(Product, pk=self.kwargs['product_id'])
+        serializer.save(product=product)
 
 class ProductDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]

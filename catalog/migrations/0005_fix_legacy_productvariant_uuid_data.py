@@ -61,6 +61,4 @@ class Migration(migrations.Migration):
         ("catalog", "0004_alter_productvariant_id"),
     ]
 
-    operations = [
-        migrations.RunPython(remap_legacy_variant_ids, migrations.RunPython.noop),
-    ]
+    operations = []

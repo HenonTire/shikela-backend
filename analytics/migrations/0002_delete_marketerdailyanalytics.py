@@ -9,8 +9,4 @@ class Migration(migrations.Migration):
         ("analytics", "0001_initial"),
     ]
 
-    operations = [
-        migrations.DeleteModel(
-            name="MarketerDailyAnalytics",
-        ),
-    ]
+    operations = []

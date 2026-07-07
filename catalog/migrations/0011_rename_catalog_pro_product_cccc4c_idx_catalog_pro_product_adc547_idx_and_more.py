@@ -9,15 +9,4 @@ class Migration(migrations.Migration):
         ("catalog", "0010_productreview"),
     ]
 
-    operations = [
-        migrations.RenameIndex(
-            model_name="productreview",
-            new_name="catalog_pro_product_adc547_idx",
-            old_name="catalog_pro_product_cccc4c_idx",
-        ),
-        migrations.RenameIndex(
-            model_name="productreview",
-            new_name="catalog_pro_rating_1c2bd1_idx",
-            old_name="catalog_pro_rating_ee403f_idx",
-        ),
-    ]
+    operations = []

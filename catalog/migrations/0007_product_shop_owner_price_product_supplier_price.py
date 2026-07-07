@@ -9,19 +9,4 @@ class Migration(migrations.Migration):
         ("catalog", "0006_productvariant_stock"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="product",
-            name="shop_owner_price",
-            field=models.DecimalField(
-                blank=True, decimal_places=2, max_digits=12, null=True
-            ),
-        ),
-        migrations.AddField(
-            model_name="product",
-            name="supplier_price",
-            field=models.DecimalField(
-                blank=True, decimal_places=2, max_digits=12, null=True
-            ),
-        ),
-    ]
+    operations = []

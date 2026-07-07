@@ -11,40 +11,4 @@ class Migration(migrations.Migration):
         ("hub", "0001_initial"),
     ]
 
-    operations = [
-        migrations.CreateModel(
-            name="Follow",
-            fields=[
-                (
-                    "id",
-                    models.UUIDField(
-                        default=uuid.uuid4,
-                        editable=False,
-                        primary_key=True,
-                        serialize=False,
-                    ),
-                ),
-                ("updated_at", models.DateTimeField(auto_now=True)),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                (
-                    "follower",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="following",
-                        to="hub.profile",
-                    ),
-                ),
-                (
-                    "following",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="followers",
-                        to="hub.profile",
-                    ),
-                ),
-            ],
-            options={
-                "unique_together": {("follower", "following")},
-            },
-        ),
-    ]
+    operations = []

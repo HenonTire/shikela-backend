@@ -7,11 +7,5 @@ class Migration(migrations.Migration):
         ("catalog", "0008_product_supplier"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="product",
-            name="minimum_wholesale_quantity",
-            field=models.PositiveIntegerField(default=1),
-        ),
-    ]
+    operations = []
 

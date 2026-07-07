@@ -9,17 +9,4 @@ class Migration(migrations.Migration):
         ("catalog", "0001_initial"),
     ]
 
-    operations = [
-        migrations.RemoveField(
-            model_name="product",
-            name="brand",
-        ),
-        migrations.AddField(
-            model_name="product",
-            name="description",
-            field=models.TextField(blank=True),
-        ),
-        migrations.DeleteModel(
-            name="Brand",
-        ),
-    ]
+    operations = []

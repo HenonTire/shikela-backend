@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ("catalog", "0005_fix_legacy_productvariant_uuid_data"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="productvariant",
-            name="stock",
-            field=models.PositiveIntegerField(default=0),
-        ),
-    ]
+    operations = []
