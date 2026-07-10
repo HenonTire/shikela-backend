@@ -1,9 +1,6 @@
 from decimal import Decimal
 from datetime import timedelta
 
-from decimal import Decimal
-from datetime import timedelta
-
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
