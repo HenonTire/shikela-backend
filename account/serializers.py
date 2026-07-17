@@ -89,39 +89,12 @@ class CourierSerializer(MerchantIdRepresentationMixin, ModelSerializer):
         return user
 
 
-
-class PaymentMethodSerializer(ModelSerializer):
+class PaymentMethodSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentMethod
-        fields = ["payment_type", "account_number", "phone_number"]
-
-    def validate(self, attrs):
-        payment_type = attrs.get("payment_type")
-        account_number = attrs.get("account_number")
-        phone_number = attrs.get("phone_number")
-        user = self.context["request"].user
-
-        if payment_type == "BANK" and not account_number:
-            raise serializers.ValidationError({"account_number": "Bank account number is required."})
-        elif payment_type in ["TELEBIRR", "MPESA"] and not phone_number:
-            raise serializers.ValidationError({"phone_number": "Phone number is required for this payment type."})
-
-        if PaymentMethod.objects.filter(shop_owner=user, payment_type=payment_type).exists():
-            raise serializers.ValidationError({"payment_type": "Payment method already exists for this user."})
+        fields = ['id', 'payment_type', 'provider_name', 'account_number', 'phone_number', 'is_verified', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'payment_type', 'is_verified', 'created_at', 'updated_at']
         
-        return attrs
-    def create(self, validated_data):
-        # Always assign the shop_owner from the logged-in user
-        user = self.context['request'].user
-
-        # Check that the user is really a ShopOwner
-        if user.role != "SHOP_OWNER":
-            raise serializers.ValidationError("Only shop owners can add payment methods.")
-
-        validated_data['shop_owner'] = user
-        return super().create(validated_data)
-
-
 class EmailVerificationTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
@@ -140,3 +113,19 @@ class EmailVerificationTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class ResendVerificationEmailSerializer(serializers.Serializer):
     email = serializers.EmailField()
+
+class AddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Address
+        fields = ['id', 'address_type', 'full_address', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'address_type', 'created_at', 'updated_at']
+class ShopDeliverySettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShopDeliverySettings
+        fields = ['regions', 'fee', 'pickup_available', 'processing_time', 'updated_at']
+        read_only_fields = ['updated_at']
+class NotificationSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationSettings
+        fields = ['push_enabled', 'email_enabled', 'updated_at']
+        read_only_fields = ['updated_at']

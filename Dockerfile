@@ -11,12 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     netcat-traditional \
     curl \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+    pip install --timeout 280 --retries 5 -r requirements.txt
+   
 
 COPY . .
 

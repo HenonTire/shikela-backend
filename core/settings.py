@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from datetime import timedelta
 import os
@@ -35,7 +34,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.staticfiles",
+    
     'rest_framework',
     #apps
     'account',
@@ -50,8 +49,17 @@ INSTALLED_APPS = [
     'notifications',
     'analytics',
     'hub',
+    'cloudinary_storage',
+    'django.contrib.staticfiles',
+  
 
 ]
+
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
+    'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
+    'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
+}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -143,14 +151,22 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Modern Django storage config — this is the real source of truth
 STORAGES = {
     "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",  # media (uploads) → Cloudinary
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",  # static → WhiteNoise, local
     },
 }
+
+# Legacy alias kept ONLY because django-cloudinary-storage's collectstatic
+# override still reads settings.STATICFILES_STORAGE directly instead of
+# checking STORAGES. Value must match STORAGES["staticfiles"]["BACKEND"] above.
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 

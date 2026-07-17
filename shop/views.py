@@ -1,4 +1,4 @@
-from rest_framework import permissions, status
+from rest_framework import permissions, request, status
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
@@ -7,6 +7,17 @@ from .models import *
 from .serializers import *
 
 # Create your views here.
+from rest_framework.generics import RetrieveUpdateAPIView
+
+class ShopMeView(RetrieveUpdateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ShopSerializer
+
+    def get_object(self):
+        shop = getattr(self.request.user, "owned_shop", None)
+        if not shop:
+            raise PermissionDenied("You don't own a shop yet.")
+        return shop
 
 class ShopListCreateView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -44,13 +55,9 @@ class CreateThemeSettingsView(ListCreateAPIView):
 
     def patch(self, request, *args, **kwargs):
         shop = self._get_owned_shop()
-        if not hasattr(shop, "theme_settings"):
-            return Response(
-                {"detail": "Theme settings not found for this shop."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        theme_settings, _created = ShopThemeSettings.objects.get_or_create(shop=shop)
         serializer = self.get_serializer(
-            shop.theme_settings,
+            theme_settings,
             data=request.data,
             partial=True,
         )

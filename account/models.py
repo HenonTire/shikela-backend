@@ -6,6 +6,7 @@ from django.contrib.auth.models import (
     BaseUserManager,
 )
 
+
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
@@ -123,7 +124,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
 
-
 class PaymentMethod(models.Model):
     PAYMENT_CHOICES = [
         ("BANK", "Bank"),
@@ -133,31 +133,84 @@ class PaymentMethod(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     shop_owner = models.ForeignKey(
-        'account.User',  # assuming shop_owner is a User with role=SHOP_OWNER
+        'account.User',
         on_delete=models.CASCADE,
         related_name="payment_methods"
     )
     payment_type = models.CharField(max_length=20, choices=PAYMENT_CHOICES)
-   
-    # Conditional fields
+    provider_name = models.CharField(max_length=100, blank=True, null=True)
     account_number = models.CharField(max_length=50, blank=True, null=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
+    is_verified = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("shop_owner", "payment_type")  # each owner can have 1 of each type
+        unique_together = ("shop_owner", "payment_type")
 
     def __str__(self):
-        return f"{self.shop_owner.full_name} - {self.payment_type}"
+        return f"{self.shop_owner.email} - {self.payment_type}"
 
-    # Optional helper method
     def get_identifier(self):
-        """
-        Returns the correct identifier based on the payment type
-        """
         if self.payment_type == "BANK":
             return self.account_number
         else:
             return self.phone_number
+class Address(models.Model):
+    ADDRESS_TYPE_CHOICES = [
+        ("SHIPPING", "Shipping"),
+        ("BILLING", "Billing"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        'account.User',
+        on_delete=models.CASCADE,
+        related_name='addresses',
+    )
+    address_type = models.CharField(max_length=20, choices=ADDRESS_TYPE_CHOICES)
+    full_address = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'address_type')
+
+    def __str__(self):
+        return f"{self.user.email} - {self.address_type}"
+class ShopDeliverySettings(models.Model):
+    PROCESSING_TIME_CHOICES = [
+        ("SAME_DAY", "Same day"),
+        ("1_BUSINESS_DAY", "1 business day"),
+        ("2_BUSINESS_DAYS", "2 business days"),
+        ("3_BUSINESS_DAYS", "3 business days"),
+    ]
+
+    shop = models.OneToOneField(
+        'shop.Shop',
+        on_delete=models.CASCADE,
+        related_name="delivery_settings",
+    )
+    regions = models.CharField(max_length=500, blank=True)
+    fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    pickup_available = models.BooleanField(default=True)
+    processing_time = models.CharField(
+        max_length=20, choices=PROCESSING_TIME_CHOICES, default="1_BUSINESS_DAY"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.shop.name} delivery settings"
+class NotificationSettings(models.Model):
+    user = models.OneToOneField(
+        'account.User',
+        on_delete=models.CASCADE,
+        related_name='notification_settings',
+    )
+    push_enabled = models.BooleanField(default=True)
+    email_enabled = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user.email} notification settings"

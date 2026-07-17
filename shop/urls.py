@@ -5,4 +5,5 @@ urlpatterns = [
     path('shops/<uuid:pk>/', ShopDetailView.as_view(), name='shop-detail'),
     path('themes/', CreateThemeView.as_view(), name='create-theme'),
     path('theme-settings/', CreateThemeSettingsView.as_view(), name='create-theme-settings'),
+    path('me/', ShopMeView.as_view(), name='shop-me'),
 ]
