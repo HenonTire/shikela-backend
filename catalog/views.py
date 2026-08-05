@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import permissions
 from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView, CreateAPIView, get_object_or_404
 from rest_framework.views import APIView
@@ -39,17 +40,34 @@ class ProductMediaUploadView(CreateAPIView):
 
     def perform_create(self, serializer):
         product = get_object_or_404(Product, pk=self.kwargs['product_id'])
+        # Only the shop owner (or staff) may upload media for this product
+        user = self.request.user
+        if not (user.is_staff or (product.shop and getattr(product.shop, 'owner', None) == user)):
+            raise PermissionDenied("You do not have permission to add media to this product.")
         serializer.save(product=product)
 
 class ProductDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Product.objects.all()
     serializer_class = ProductSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Product.objects.all()
+        return Product.objects.filter(
+            Q(shop__owner=user) | Q(supplier=user)
+        )
 
 class CreateCategoryView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     queryset = Category.objects.all()
     serializer_class = CatagorySerializer
+
+    def perform_create(self, serializer):
+        # Only staff may create new categories
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only staff users can create categories.")
+        serializer.save()
 
 
 class ImportSupplierProductView(APIView):

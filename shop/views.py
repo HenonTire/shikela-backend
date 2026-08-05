@@ -21,12 +21,23 @@ class ShopMeView(RetrieveUpdateAPIView):
 
 class ShopListCreateView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Shop.objects.all()
     serializer_class = ShopSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Shop.objects.all()
+        return Shop.objects.filter(owner=user)
+
 class ShopDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Shop.objects.all()
     serializer_class = ShopSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Shop.objects.all()
+        return Shop.objects.filter(owner=user)
 
 class CreateThemeView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -34,8 +45,16 @@ class CreateThemeView(ListCreateAPIView):
     serializer_class = ThemeSerializer
 class CreateThemeSettingsView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = ShopThemeSettings.objects.all()
     serializer_class = ShopThemeSettingsSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return ShopThemeSettings.objects.all()
+        shop = getattr(user, "owned_shop", None)
+        if not shop:
+            return ShopThemeSettings.objects.none()
+        return ShopThemeSettings.objects.filter(shop=shop)
 
     def _get_owned_shop(self):
         shop = getattr(self.request.user, "owned_shop", None)

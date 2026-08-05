@@ -69,8 +69,14 @@ class RegisterUserView(RegisterUserWithEmailVerificationMixin, ListCreateAPIView
 
 class UserDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = User.objects.all()
     serializer_class = UserSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        # Staff users can access all users; regular users only their own record
+        if user.is_staff:
+            return User.objects.all()
+        return User.objects.filter(pk=user.pk)
 
 
 class RegisterShopOwnerView(RegisterUserWithEmailVerificationMixin, ListCreateAPIView):

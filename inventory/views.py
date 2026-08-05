@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import permissions, status
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.response import Response
@@ -15,39 +16,77 @@ from .services import InventoryService
 
 class LocationListCreateView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Location.objects.all().order_by("-id")
     serializer_class = LocationSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Location.objects.all().order_by("-id")
+        return (
+            Location.objects.filter(
+                Q(inventory__variant__product__shop__owner=user) | Q(inventory__variant__product__supplier=user)
+            )
+            .distinct()
+            .order_by("-id")
+        )
 
 
 class LocationDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Location.objects.all()
     serializer_class = LocationSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Location.objects.all()
+        return Location.objects.filter(
+            Q(inventory__variant__product__shop__owner=user) | Q(inventory__variant__product__supplier=user)
+        ).distinct()
 
 
 class InventoryListCreateView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Inventory.objects.select_related("variant__product", "location").all().order_by("-id")
     serializer_class = InventorySerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        base_qs = Inventory.objects.select_related("variant__product", "location").all().order_by("-id")
+        if user.is_staff:
+            return base_qs
+        return base_qs.filter(
+            Q(variant__product__shop__owner=user) | Q(variant__product__supplier=user)
+        )
 
 
 class InventoryDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Inventory.objects.select_related("variant__product", "location").all()
     serializer_class = InventorySerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        base_qs = Inventory.objects.select_related("variant__product", "location").all()
+        if user.is_staff:
+            return base_qs
+        return base_qs.filter(
+            Q(variant__product__shop__owner=user) | Q(variant__product__supplier=user)
+        )
 
 
 class StockMovementListCreateView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = StockMovement.objects.select_related("inventory__variant__product", "inventory__location").all().order_by("-created_at", "-id")
     serializer_class = StockMovementSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        base_qs = StockMovement.objects.select_related("inventory__variant__product", "inventory__location").all().order_by("-created_at", "-id")
+        user = self.request.user
+        if not user.is_staff:
+            base_qs = base_qs.filter(
+                Q(inventory__variant__product__shop__owner=user) | Q(inventory__variant__product__supplier=user)
+            )
         inventory_id = self.request.query_params.get("inventory")
         if inventory_id:
-            qs = qs.filter(inventory_id=inventory_id)
-        return qs
+            base_qs = base_qs.filter(inventory_id=inventory_id)
+        return base_qs
 
 
 class InventoryActionView(APIView):
