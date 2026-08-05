@@ -129,7 +129,6 @@ class MarketerContractListCreateView(ListCreateAPIView):
 class MarketerContractDetailView(RetrieveUpdateAPIView):
     permission_classes = [permissions.IsAuthenticated, IsMarketerOrShopOwner]
     serializer_class = MarketerContractUpdateSerializer
-    queryset = MarketerContract.objects.all()
 
     def get_queryset(self):
         user = self.request.user
