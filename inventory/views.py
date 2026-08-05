@@ -77,6 +77,11 @@ class InventoryActionView(APIView):
                 return Response({"detail": "Not enough reserved stock to confirm."}, status=status.HTTP_400_BAD_REQUEST)
             InventoryService.confirm_stock(inventory, qty, reason=reason or "Order Confirmed")
         else:
+            # Disallow restocking of dropship/imported variants. The source
+            # supplier's stock is authoritative and imported variants should not
+            # be manually restocked in this shop's inventory.
+            if getattr(inventory.variant, "source_variant", None) is not None and qty > 0:
+                return Response({"detail": "Cannot restock an imported/dropship variant directly; stock is managed by the source supplier."}, status=status.HTTP_400_BAD_REQUEST)
             InventoryService.adjust_stock(inventory, qty, reason=reason or "Manual Adjustment")
 
         inventory.refresh_from_db()

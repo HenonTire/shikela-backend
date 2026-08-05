@@ -96,12 +96,15 @@ class ImportSupplierProductView(APIView):
         )
 
         for variant in source.variants.all():
+            # Link imported variant back to the supplier's source variant so
+            # dropship flows can resolve and mutate the supplier's live stock.
             ProductVariant.objects.create(
                 product=imported,
                 variant_name=variant.variant_name,
                 price=variant.price,
                 attributes=variant.attributes,
                 stock=variant.stock,
+                source_variant=variant,
             )
 
         for media in source.media.all():

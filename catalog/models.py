@@ -98,6 +98,16 @@ class ProductVariant(models.Model):
     variant_name = models.CharField(max_length=255)  # e.g., "Red / Large"
     price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     attributes = models.JSONField(blank=True, null=True)  # {"color": "red", "size": "L"}
+    # If this variant was imported from another shop/supplier, source_variant
+    # points to the supplier's canonical variant. Dropship flows should operate
+    # against the source variant's live stock. Keep this nullable for normal products.
+    source_variant = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="imported_variants",
+    )
     stock = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

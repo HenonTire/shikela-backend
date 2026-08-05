@@ -9,10 +9,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-a5mnheq-h^(s0si(td8&-+g47bnk9q+lxf0t-kk=2n%fn0dn_f")
-
-
+# DEBUG is read first so the code can enforce secure defaults in production
 DEBUG = os.getenv("DEBUG", "true").lower() in {"1", "true", "yes", "on"}
+
+from django.core.exceptions import ImproperlyConfigured
+
+# SECRET_KEY must be provided via environment in production. When DEBUG is True
+# an obviously insecure development default is allowed for convenience only.
+_secret = os.getenv("DJANGO_SECRET_KEY", "")
+if not _secret:
+    if DEBUG:
+        SECRET_KEY = "insecure-dev-secret-for-local-testing-only"
+    else:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY environment variable is required when DEBUG is False")
+else:
+    SECRET_KEY = _secret
 
 ALLOWED_HOSTS = [host.strip() for host in os.getenv("ALLOWED_HOSTS", "").split(",") if host.strip()]
 if DEBUG and not ALLOWED_HOSTS:
@@ -225,19 +236,15 @@ def _normalize_pem(value: str) -> str:
 
 # Default to SantimPay testnet unless explicitly opting into production.
 SANTIMPAY_TEST_BED = os.getenv("SANTIMPAY_TEST_BED", "true").lower() in {"1", "true", "yes", "on"}
-SANTIMPAY_MERCHANT_ID = os.getenv("SANTIMPAY_MERCHANT_ID", "9e2dab64-e2bb-4837-9b85-d855dd878d2b")
-SANTIMPAY_PRIVATE_KEY = _normalize_pem(
-    os.getenv(
-        "SANTIMPAY_PRIVATE_KEY",
-        """
------BEGIN EC PRIVATE KEY-----
-MHcCAQEEIA6End3PsH0SIKGrNSv1Oie2xcubUtIbkiiWO36ZM6JXoAoGCCqGSM49
-AwEHoUQDQgAEPT1BI//IvDUZn3vFBrwSM+Q1CT9KF64XVyMeidH7XSc4bRsszQUf
-FGcp7Hy7iV4Bf9U5MRY8YKpExoThMGfJBw==
------END EC PRIVATE KEY-----
-""".strip(),
-    )
-)
+
+# SantimPay credentials must be provided via environment when running with DEBUG=False.
+SANTIMPAY_MERCHANT_ID = os.getenv("SANTIMPAY_MERCHANT_ID", "")
+_santimpay_private_key_raw = os.getenv("SANTIMPAY_PRIVATE_KEY", "")
+if not SANTIMPAY_MERCHANT_ID and not DEBUG:
+    raise ImproperlyConfigured("SANTIMPAY_MERCHANT_ID environment variable is required when DEBUG is False")
+if not _santimpay_private_key_raw and not DEBUG:
+    raise ImproperlyConfigured("SANTIMPAY_PRIVATE_KEY environment variable is required when DEBUG is False")
+SANTIMPAY_PRIVATE_KEY = _normalize_pem(_santimpay_private_key_raw)
 SANTIMPAY_SIGN_TOKEN_URL = os.getenv("SANTIMPAY_SIGN_TOKEN_URL", "")
 SANTIMPAY_SUCCESS_REDIRECT_URL = os.getenv("SANTIMPAY_SUCCESS_REDIRECT_URL", "http://localhost:8000/payment/success")
 SANTIMPAY_FAILURE_REDIRECT_URL = os.getenv("SANTIMPAY_FAILURE_REDIRECT_URL", "http://localhost:8000/payment/failure")

@@ -120,8 +120,16 @@ class OrderService:
             requested_qty = int(item["quantity"])
             if requested_qty <= 0:
                 raise ValueError("Quantity must be greater than zero")
-            required_qty_by_variant[str(resolved_variant.id)] = (
-                required_qty_by_variant.get(str(resolved_variant.id), 0) + requested_qty
+
+            # If this variant is an imported/dropship variant, operate on the
+            # supplier's source_variant instead. Keep the item's original
+            # variant reference so OrderItem continues to point to the local
+            # imported variant; but locking/decrement must use the effective
+            # (source) variant.
+            effective_variant = resolved_variant.source_variant if getattr(resolved_variant, "source_variant", None) else resolved_variant
+
+            required_qty_by_variant[str(effective_variant.id)] = (
+                required_qty_by_variant.get(str(effective_variant.id), 0) + requested_qty
             )
             contract = item.get("marketer_contract")
             if contract:
@@ -134,7 +142,9 @@ class OrderService:
             normalized_items.append(
                 {
                     "product": item["product"],
+                    # Keep the resolved (possibly imported) variant for record-keeping
                     "variant": resolved_variant,
+                    "effective_variant": effective_variant,
                     "quantity": requested_qty,
                     "marketer_contract": contract,
                 }
@@ -149,17 +159,21 @@ class OrderService:
             if not locked_variant or requested_qty > locked_variant.stock:
                 raise ValueError("Insufficient stock")
 
+        # Attach the locked variant (which may be a source variant) to the item
         for item in normalized_items:
-            item["variant"] = locked_variants[str(item["variant"].id)]
+            item["locked_variant"] = locked_variants[str(item["effective_variant"].id)]
 
+        # Decrement stock on the locked (effective/source) variants only.
         for variant_id, requested_qty in required_qty_by_variant.items():
             locked_variant = locked_variants[variant_id]
             locked_variant.stock -= requested_qty
             locked_variant.save(update_fields=["stock", "updated_at"])
 
         # 2. Calculate totals
+        from decimal import Decimal
+
         subtotal = sum(
-            OrderService._get_unit_price(item["product"], item.get("variant")) * item["quantity"]
+            Decimal(str(OrderService._get_unit_price(item["product"], item.get("variant")))) * Decimal(item["quantity"])
             for item in normalized_items
         )
         total = subtotal  # + delivery_fee if any
@@ -178,8 +192,13 @@ class OrderService:
         )
 
         # 4. Create OrderItems
+        from decimal import Decimal
         for item in normalized_items:
-            unit_price = OrderService._get_unit_price(item["product"], item.get("variant"))
+            # Ensure prices/totals are Decimal instances to avoid accidental
+            # string multiplication (which would repeat strings instead of
+            # producing numeric totals).
+            unit_price = Decimal(str(OrderService._get_unit_price(item["product"], item.get("variant"))))
+            qty_decimal = Decimal(item["quantity"]) if not isinstance(item["quantity"], Decimal) else item["quantity"]
             OrderItem.objects.create(
                 order=order,
                 product=item["product"],
@@ -189,7 +208,7 @@ class OrderService:
                 sku=item["product"].sku,
                 price=unit_price,
                 quantity=item["quantity"],
-                total=unit_price * item["quantity"]
+                total=unit_price * qty_decimal
             )
 
         # Non-blocking notification: order flow must not fail on push errors.
