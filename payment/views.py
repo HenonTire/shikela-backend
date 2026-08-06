@@ -331,10 +331,19 @@ class PayoutHistoryView(ListAPIView):
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
+        history = response.data
+        if isinstance(history, dict) and "results" in history:
+            history = history["results"]
+        summary = PaymentService.get_earnings_dashboard(request.user)
         return Response(
             {
-                "summary": PaymentService.get_earnings_dashboard(request.user),
-                "history": response.data,
+                **summary,
+                "total_earnings": summary["total"],
+                "available_earnings": summary["available"],
+                "pending_payouts": summary["pending"],
+                "withdrawn_earnings": summary["withdrawn"],
+                "summary": summary,
+                "history": history,
             },
             status=response.status_code,
         )
