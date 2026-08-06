@@ -8,4 +8,5 @@ urlpatterns = [
     path("items/<int:pk>/", InventoryDetailView.as_view(), name="inventory-item-detail"),
     path("items/<int:pk>/actions/", InventoryActionView.as_view(), name="inventory-item-actions"),
     path("movements/", StockMovementListCreateView.as_view(), name="inventory-movement-list-create"),
+    path('products/<uuid:pk>/restock/', ProductRestockView.as_view(), name='product-restock'),
 ]

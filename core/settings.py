@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-
+# 0107269
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-a5mnheq-h^(s0si(td8&-+g47bnk9q+lxf0t-kk=2n%fn0dn_f")
@@ -34,7 +34,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    
+    "rest_framework_simplejwt.token_blacklist",  
     'rest_framework',
     #apps
     'account',
@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'notifications',
     'analytics',
     'hub',
+    'procurement',
     'cloudinary_storage',
     'django.contrib.staticfiles',
   
@@ -153,19 +154,28 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Modern Django storage config — this is the real source of truth
+#
+# NOTE: switched from CompressedManifestStaticFilesStorage to
+# CompressedStaticFilesStorage. The manifest variant hashes filenames and
+# rewrites url()/@import references inside CSS during collectstatic — that
+# rewrite step currently crashes on Django 6.0.2's admin/css/forms.css
+# reference to admin/css/widgets.css under whitenoise 6.12.0
+# (MissingFileError), and WHITENOISE_MANIFEST_STRICT does not suppress it
+# since it's a collectstatic-time failure, not a runtime lookup. Dropping
+# the manifest/hashing layer avoids that crash entirely. We keep
+# compression (gzip/brotli) for serving performance. Static files just
+# won't get cache-busting hashed filenames until this is fixed upstream —
+# fine for now since this mainly affects the Django admin panel.
 STORAGES = {
     "default": {
-        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",  # media (uploads) → Cloudinary
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",  # static → WhiteNoise, local
+        "BACKEND": "core.staticfiles.ResilientCompressedStaticFilesStorage",
     },
 }
 
-# Legacy alias kept ONLY because django-cloudinary-storage's collectstatic
-# override still reads settings.STATICFILES_STORAGE directly instead of
-# checking STORAGES. Value must match STORAGES["staticfiles"]["BACKEND"] above.
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+STATICFILES_STORAGE = "core.staticfiles.ResilientCompressedStaticFilesStorage"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"

@@ -95,13 +95,32 @@ class ProductMedia(models.Model):
 class ProductVariant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     product = models.ForeignKey(Product, related_name="variants", on_delete=models.CASCADE)
-    variant_name = models.CharField(max_length=255)  # e.g., "Red / Large"
+    variant_name = models.CharField(max_length=255)
     price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    attributes = models.JSONField(blank=True, null=True)  # {"color": "red", "size": "L"}
+    attributes = models.JSONField(blank=True, null=True)
     stock = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
+    # NEW — set only on imported/dropship variants. Points back to the
+    # exact supplier variant this one mirrors for stock purposes.
+    source_variant = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dependent_variants",
+    )
+
+    @property
+    def effective_stock(self) -> int:
+        """The stock that should actually be shown/trusted for this variant.
+        For imported (dropship) variants, this is the supplier's live stock,
+        not the number stored on this row."""
+        if self.source_variant_id:
+            return self.source_variant.stock
+        return self.stock
+
     def __str__(self):
         return f"{self.product.name} - {self.variant_name}"
 
@@ -125,53 +144,3 @@ class ProductReview(models.Model):
 
     def __str__(self):
         return f"{self.product_id} - {self.user_id} - {self.rating}"
-
-
-#example 
-# {
-#   "name": "Premium T-Shirt",
-#   "description": "A high-quality t-shirt made from organic cotton.",
-#   "sku": "TSHIRT-002",
-#   "price": "39.99",
-#   "category": 1,
-#   "is_active": true,
-#   "weight": "0.35",
-#   "dimensions": "32x22x3",
-#   "tags": ["tshirt", "premium", "2026"],
-
-#   "variants": [
-#     {
-#       "variant_name": "Red - Large",
-#       "price": "39.99",
-#       "attributes": {
-#         "color": "Red",
-#         "size": "L"
-#       }
-#     },
-#     {
-#       "variant_name": "Blue - Medium",
-#       "price": "37.99",
-#       "attributes": {
-#         "color": "Blue",
-#         "size": "M"
-#       }
-#     }
-#   ],
-
-#   "media": [
-#     {
-#       "media_type": "image",
-#       "file": "products/images/tshirt1.jpg",
-#       "caption": "Front view",
-#       "is_primary": true,
-#       "order": 1
-#     },
-#     {
-#       "media_type": "image",
-#       "file": "products/images/tshirt2.jpg",
-#       "caption": "Back view",
-#       "is_primary": false,
-#       "order": 2
-#     }
-#   ]
-# }

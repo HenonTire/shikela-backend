@@ -52,7 +52,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     password = models.CharField(max_length=128)
 
     # Verification / badges
-    is_verified = models.BooleanField(default=False)
+    email_verified = models.BooleanField(default=False)
     license_document = models.FileField(upload_to="licenses/", blank=True, null=True)
     badge = models.CharField(
         max_length=50,
@@ -214,3 +214,28 @@ class NotificationSettings(models.Model):
 
     def __str__(self):
         return f"{self.user.email} notification settings"
+class IdentityVerification(models.Model):
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("APPROVED", "Approved"),
+        ("REJECTED", "Rejected"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        'account.User',
+        on_delete=models.CASCADE,
+        related_name='identity_verification',
+    )
+    document_type = models.CharField(max_length=100)
+    document_number = models.CharField(max_length=100)
+    front_image = models.ImageField(upload_to='identity/front/')
+    back_image = models.ImageField(upload_to='identity/back/', blank=True, null=True)
+    selfie_image = models.ImageField(upload_to='identity/selfie/')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    review_notes = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.status}"

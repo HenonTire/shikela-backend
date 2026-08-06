@@ -10,5 +10,6 @@ urlpatterns = [
     path('reviews/<uuid:pk>/', ProductReviewDetailView.as_view(), name='product-review-detail'),
     path('categories/', CreateCategoryView.as_view(), name='create-category'),
     path('products/<uuid:product_id>/media/', ProductMediaUploadView.as_view(), name='product-media-upload'),
-  
+    path('suppliers/<uuid:supplier_id>/products/', SupplierProductsForShopView.as_view(), name='supplier-products-for-shop'),
+    path('products/mine/', MyShopProductsView.as_view(), name='my-shop-products'),
 ]

@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from rest_framework import permissions
 from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView, CreateAPIView, get_object_or_404
 from rest_framework.views import APIView
@@ -7,6 +9,8 @@ from rest_framework.exceptions import PermissionDenied
 from .models import *
 from .serializers import *
 from .services import get_ranked_products_queryset
+from django.db import transaction
+from django.db.models import F
 # Create your views here.
 
 class CreateProductView(ListCreateAPIView):
@@ -43,14 +47,21 @@ class ProductMediaUploadView(CreateAPIView):
 
 class ProductDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
-    queryset = Product.objects.all()
     serializer_class = ProductSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == "SHOP_OWNER":
+            shop = getattr(user, "owned_shop", None)
+            return Product.objects.filter(shop=shop) if shop else Product.objects.none()
+        if user.role == "SUPPLIER":
+            return Product.objects.filter(supplier=user)
+        return Product.objects.none()
 
 class CreateCategoryView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     queryset = Category.objects.all()
     serializer_class = CatagorySerializer
-
 
 class ImportSupplierProductView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -79,15 +90,35 @@ class ImportSupplierProductView(APIView):
         if not source.supplier:
             return Response({"detail": "Only supplier products can be imported."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Price is now required — the shop owner must set their own
+        # selling price, and it must be strictly greater than the
+        # supplier's price so there's always a profit margin.
+        requested_price = request.data.get("price")
+        if requested_price is None:
+            return Response(
+                {"detail": f"price is required and must be greater than the supplier's price (ETB {source.price})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            selling_price = Decimal(str(requested_price))
+        except (InvalidOperation, ValueError):
+            return Response({"detail": "price must be a valid number."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if selling_price <= source.price:
+            return Response(
+                {"detail": f"price must be greater than the supplier's price (ETB {source.price}) to ensure profit."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         imported = Product.objects.create(
             name=self._unique_name(source.name),
             description=source.description,
             shop=shop,
             supplier=source.supplier,
-            price=source.price,
-            supplier_price=source.supplier_price,
+            price=selling_price,
+            supplier_price=source.price,
             minimum_wholesale_quantity=source.minimum_wholesale_quantity,
-            shop_owner_price=source.shop_owner_price,
+            shop_owner_price=selling_price,
             category=source.category,
             is_active=source.is_active,
             weight=source.weight,
@@ -95,13 +126,16 @@ class ImportSupplierProductView(APIView):
             tags=source.tags,
         )
 
-        for variant in source.variants.all():
+        source_variants = list(source.variants.all())
+        for variant in source_variants:
+            variant_price = selling_price if len(source_variants) == 1 else variant.price
             ProductVariant.objects.create(
                 product=imported,
                 variant_name=variant.variant_name,
-                price=variant.price,
+                price=variant_price,
                 attributes=variant.attributes,
-                stock=variant.stock,
+                stock=0,  # unused for dropship variants — see source_variant/effective_stock
+                source_variant=variant,  # mirrors this supplier variant's live stock
             )
 
         for media in source.media.all():
@@ -113,6 +147,7 @@ class ImportSupplierProductView(APIView):
                 is_primary=media.is_primary,
                 order=media.order,
             )
+        
 
         return Response(
             {
@@ -120,11 +155,10 @@ class ImportSupplierProductView(APIView):
                 "source_product_id": str(source.id),
                 "imported_product_id": str(imported.id),
                 "shop_id": str(shop.id),
+                "price": str(selling_price),
             },
             status=status.HTTP_201_CREATED,
         )
-
-
 class ProductReviewListCreateView(ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ProductReviewSerializer
@@ -156,3 +190,33 @@ class ProductReviewDetailView(RetrieveUpdateDestroyAPIView):
         if instance.user_id != self.request.user.id:
             raise PermissionDenied("You can only delete your own review.")
         instance.delete()
+
+
+class SupplierProductsForShopView(ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ProductSerializer
+
+    def get_queryset(self):
+        supplier_id = self.kwargs["supplier_id"]
+        return (
+            Product.objects.filter(supplier_id=supplier_id, is_active=True, shop__isnull=True,)
+            .select_related("category")
+            .prefetch_related("variants", "media")
+        )
+class MyShopProductsView(ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ProductSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role != "SHOP_OWNER":
+            return Product.objects.none()
+        shop = getattr(user, "owned_shop", None)
+        if not shop:
+            return Product.objects.none()
+        return (
+            Product.objects.filter(shop=shop)
+            .select_related("category")
+            .prefetch_related("variants", "media")
+            .order_by("-created_at")
+        )

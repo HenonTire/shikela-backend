@@ -1,6 +1,8 @@
 
 from .models import *
-
+from django.db import transaction
+from django.db.models import F
+from catalog.models import ProductVariant
 
 class InventoryService:
     
@@ -49,7 +51,31 @@ class InventoryService:
             inventory=inventory,
             quantity=qty,
             reason=reason
+
         )
+    @staticmethod
+    def restock_variant(variant: ProductVariant, qty: int, reason: str, user=None) -> Inventory:
+        """Restock = stock-in. Keeps Inventory.quantity_available and
+        ProductVariant.stock in sync, race-safe via select_for_update."""
+        with transaction.atomic():
+            inventory, _ = Inventory.objects.select_for_update().get_or_create(
+                variant=variant, location=None, defaults={"quantity_available": 0}
+            )
+            inventory.quantity_available = F("quantity_available") + qty
+            inventory.save(update_fields=["quantity_available", "last_updated"])
+            inventory.refresh_from_db()
+
+            variant_locked = ProductVariant.objects.select_for_update().get(pk=variant.pk)
+            variant_locked.stock = F("stock") + qty
+            variant_locked.save(update_fields=["stock", "updated_at"])
+            variant_locked.refresh_from_db()
+
+            StockMovement.objects.create(
+                inventory=inventory,
+                quantity=qty,
+                reason=reason,
+            )
+        return inventory
 
 
 class StockManager:
