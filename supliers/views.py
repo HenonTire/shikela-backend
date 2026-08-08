@@ -217,4 +217,6 @@ class SupplierLowStockAlertView(APIView):
             }
             for variant in page
         ]
-        return paginator.get_paginated_response(alerts)
+        response = paginator.get_paginated_response(alerts)
+        response.data["alerts"] = response.data["results"]
+        return response

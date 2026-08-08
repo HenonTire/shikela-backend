@@ -1,12 +1,20 @@
 from decimal import Decimal
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from account.models import User
 from catalog.models import Product, ProductVariant
 
 
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "supplier-api-tests",
+        }
+    }
+)
 class SupplierAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()

@@ -26,7 +26,14 @@ class CourierShipmentListView(APIView):
             .filter(courier=request.user)
             .order_by("-updated_at")
         )
-        return paginated_response(self, request, queryset, ShipmentSerializer, status=status.HTTP_200_OK)
+        return paginated_response(
+            self,
+            request,
+            queryset,
+            ShipmentSerializer,
+            status=status.HTTP_200_OK,
+            results_key="shipments",
+        )
 
 
 class CourierShipmentDetailView(APIView):

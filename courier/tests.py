@@ -1,7 +1,7 @@
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from account.models import User
@@ -12,6 +12,14 @@ from order.models import Order, OrderItem
 from shop.models import Shop
 
 
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "courier-flow-tests",
+        }
+    }
+)
 class CourierFlowTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -153,8 +161,11 @@ class CourierFlowTests(TestCase):
         self.client.force_authenticate(user=first_shipment.courier)
         response = self.client.get("/courier/shipments/")
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]["id"], str(first_shipment.id))
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(len(response.data["shipments"]), 1)
+        self.assertEqual(response.data["results"][0]["id"], str(first_shipment.id))
+        self.assertEqual(response.data["shipments"][0]["id"], str(first_shipment.id))
 
     def test_round_robin_auto_assignment_across_orders(self):
         first_shipment = create_shipment_for_order(self.order)

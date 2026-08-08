@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 
 from django.db import close_old_connections
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 from account.models import User
 from catalog.models import Category, Product, ProductVariant
 from shop.models import Shop
@@ -14,6 +14,14 @@ from .models import Cart, CartItem, Order
 from .services import OrderService
 
 
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "order-view-tests",
+        }
+    }
+)
 class OrderViewsTests(APITestCase):
     def setUp(self):
         self.owner = User.objects.create_user(
@@ -463,4 +471,3 @@ class OrderConcurrencyTests(TransactionTestCase):
             ("insufficient stock" in combined_error) or ("table is locked" in combined_error),
             results,
         )
-

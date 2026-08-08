@@ -58,7 +58,7 @@ class ListCartItemsView(APIView):
     def get(self, request):
         cart = Cart.objects.filter(user=request.user, is_active=True).first()
         if not cart:
-            return paginated_data_response(self, request, [])
+            return paginated_data_response(self, request, [], results_key="items")
 
         items = CartItem.objects.filter(cart=cart).select_related('product', 'variant')
         data = []
@@ -72,7 +72,7 @@ class ListCartItemsView(APIView):
                 "price": _item_unit_price(item.product, item.variant)
             })
 
-        return paginated_data_response(self, request, data)
+        return paginated_data_response(self, request, data, results_key="items")
 
 
 
@@ -221,7 +221,9 @@ class ListOrdersView(APIView):
                     } for item in order.items.select_related("product", "variant").all()
                 ]
             })
-        return paginator.get_paginated_response(data)
+        response = paginator.get_paginated_response(data)
+        response.data["orders"] = response.data["results"]
+        return response
 
 
 class OrderDeliveryMethodUpdateView(APIView):
