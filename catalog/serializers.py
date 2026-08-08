@@ -8,10 +8,16 @@ class CatagorySerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 class ProductVariantSerializer(serializers.ModelSerializer):
+    available_stock = serializers.SerializerMethodField(read_only=True)
+    id = serializers.UUIDField(required=False)  # writable for update-matching, but optional so create() still works
+
     class Meta:
         model = ProductVariant
-        fields = ['id', 'variant_name', 'price', 'attributes', 'stock']
+        fields = ['id', 'variant_name', 'price', 'attributes', 'stock', 'available_stock']
         read_only_fields = ['id']
+
+    def get_available_stock(self, obj):
+        return obj.effective_stock
 
 class ProductMediaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -108,6 +114,46 @@ class ProductSerializer(serializers.ModelSerializer):
             ProductMedia.objects.create(product=product, **media)
         
         return product
+    def update(self, instance, validated_data):
+        variants_data = validated_data.pop('variants', None)
+        media_data = validated_data.pop('media', None)
+        validated_data.pop('stock', None)  # not used on update; variants carry their own stock
+
+        # Update simple fields on the product itself
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        # Only touch variants if the request actually sent variant data.
+        # An empty/omitted list here means "don't change variants" rather
+        # than "delete all variants" — safer default for a PATCH.
+        if variants_data:
+            existing_variants = {str(v.id): v for v in instance.variants.all()}
+            sent_ids = set()
+            for variant_data in variants_data:
+                variant_id = variant_data.pop('id', None)
+                if variant_id and str(variant_id) in existing_variants:
+                    variant = existing_variants[str(variant_id)]
+                    for attr, value in variant_data.items():
+                        setattr(variant, attr, value)
+                    variant.save()
+                    sent_ids.add(str(variant_id))
+                else:
+                    new_variant = ProductVariant.objects.create(product=instance, **variant_data)
+                    sent_ids.add(str(new_variant.id))
+            # Remove variants that were dropped from the form
+            for vid, variant in existing_variants.items():
+                if vid not in sent_ids:
+                    variant.delete()
+
+        # New media gets appended; existing media isn't touched here since
+        # your Flutter update flow uploads new media separately via the
+        # /media/ endpoint rather than sending it inline.
+        if media_data:
+            for media_item in media_data:
+                ProductMedia.objects.create(product=instance, **media_item)
+
+        return instance
 
 
 class ProductReviewSerializer(serializers.ModelSerializer):
@@ -130,4 +176,3 @@ class ProductReviewSerializer(serializers.ModelSerializer):
             "first_name": obj.user.first_name,
             "last_name": obj.user.last_name,
         }
-

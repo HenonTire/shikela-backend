@@ -75,3 +75,22 @@ class InventoryActionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["reserve", "release", "confirm", "adjust"])
     quantity = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(required=False, allow_blank=True, max_length=255)
+class ProductRestockSerializer(serializers.Serializer):
+    variant_id = serializers.UUIDField(required=False)
+    quantity = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        product = self.context["product"]
+        variant_id = attrs.get("variant_id")
+        if variant_id:
+            variant = product.variants.filter(id=variant_id).first()
+            if not variant:
+                raise serializers.ValidationError("Variant not found on this product.")
+        else:
+            variants = list(product.variants.all())
+            if len(variants) != 1:
+                raise serializers.ValidationError("This product has multiple variants — specify variant_id.")
+            variant = variants[0]
+        attrs["variant"] = variant
+        return attrs

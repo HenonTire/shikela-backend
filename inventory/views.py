@@ -3,7 +3,12 @@ from rest_framework import permissions, status
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.generics import get_object_or_404
+from catalog.models import Product
+from catalog.serializers import ProductSerializer
+from .serializers import ProductRestockSerializer
+from .services import InventoryService
 from .models import Inventory, Location, StockMovement
 from .serializers import (
     InventoryActionSerializer,
@@ -12,6 +17,8 @@ from .serializers import (
     StockMovementSerializer,
 )
 from .services import InventoryService
+from rest_framework import serializers
+
 
 
 class LocationListCreateView(ListCreateAPIView):
@@ -132,3 +139,38 @@ class InventoryActionView(APIView):
             "latest_movement": StockMovementSerializer(latest_movement).data if latest_movement else None,
         }
         return Response(payload, status=status.HTTP_200_OK)
+
+
+
+class ProductRestockView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        product = get_object_or_404(
+            Product.objects.select_related("shop", "shop__owner", "supplier"), pk=pk
+        )
+        user = request.user
+        owns_product = (
+            (user.role == "SHOP_OWNER" and product.shop_id and product.shop.owner_id == user.id)
+            or (user.role == "SUPPLIER" and product.supplier_id == user.id)
+        )
+        if not owns_product:
+            raise PermissionDenied("You can only restock your own products.")
+
+        serializer = ProductRestockSerializer(data=request.data, context={"product": product})
+        serializer.is_valid(raise_exception=True)
+        variant = serializer.validated_data["variant"]
+        quantity = serializer.validated_data["quantity"]
+        reason = serializer.validated_data.get("reason") or "Restock"
+
+        InventoryService.restock_variant(variant, quantity, reason, user=user)
+        if variant.source_variant_id:
+            raise serializers.ValidationError(
+                "This product's stock is managed by the supplier and can't be manually restocked."
+            )
+
+        product.refresh_from_db()
+        return Response(
+            ProductSerializer(product, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )

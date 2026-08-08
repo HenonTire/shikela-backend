@@ -96,7 +96,8 @@ class NotificationServiceTests(TestCase):
         )
 
     @patch("notifications.services.NotificationService._send_push_to_user")
-    def test_notify_schedules_push_on_commit(self, mock_send_push):
+    @patch("notifications.services.NotificationService._send_email_safely")
+    def test_notify_schedules_push_on_commit(self, mock_send_email, mock_send_push):
         payload = {"type": "payment_success", "order_id": "1"}
         with self.captureOnCommitCallbacks(execute=False) as callbacks:
             notification = NotificationService.notify(
@@ -106,19 +107,19 @@ class NotificationServiceTests(TestCase):
                 message="Order paid",
                 payload=payload,
             )
-
         self.assertTrue(Notification.objects.filter(id=notification.id).exists())
-        self.assertEqual(len(callbacks), 1)
+        self.assertEqual(len(callbacks), 2)
         mock_send_push.assert_not_called()
-
-        callbacks[0]()
+        mock_send_email.assert_not_called()
+        for callback in callbacks:
+            callback()
         mock_send_push.assert_called_once_with(
             user_id=self.user.id,
             title="Payment Successful",
             message="Order paid",
             payload=payload,
         )
-
+        mock_send_email.assert_called_once()
     def test_should_deactivate_token_only_for_invalid_token_errors(self):
         self.assertTrue(
             NotificationService._should_deactivate_token("messaging/registration-token-not-registered")

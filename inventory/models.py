@@ -1,5 +1,9 @@
 from django.db import models
 from catalog.models import ProductVariant
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from catalog.models import ProductVariant
+
 # Create your models here.
 class Location(models.Model):
     name = models.CharField(max_length=255)  # warehouse or supplier
@@ -18,3 +22,14 @@ class StockMovement(models.Model):
     quantity = models.IntegerField()  # positive for stock_in, negative for stock_out
     reason = models.CharField(max_length=255)  # "Order Reserved", "Stock Adjustment"
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+
+@receiver(post_save, sender=ProductVariant)
+def create_default_inventory(sender, instance: ProductVariant, created, **kwargs):
+    if created:
+        Inventory.objects.get_or_create(
+            variant=instance,
+            location=None,
+            defaults={"quantity_available": instance.stock},
+        )

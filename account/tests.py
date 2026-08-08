@@ -125,7 +125,7 @@ class EmailVerificationFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 201, response.content)
         user = User.objects.get(email="verifyme@example.com")
-        self.assertFalse(user.is_verified)
+        self.assertFalse(user.email_verified)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("/auth/verify-email/", mail.outbox[0].body)
 
@@ -138,7 +138,7 @@ class EmailVerificationFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.content)
         user.refresh_from_db()
-        self.assertTrue(user.is_verified)
+        self.assertTrue(user.email_verified)
 
     def test_login_requires_verified_email(self):
         user = User.objects.create_user(email="blocked@example.com", password="Pass123!")
@@ -149,8 +149,8 @@ class EmailVerificationFlowTests(TestCase):
         )
         self.assertEqual(blocked_response.status_code, 401, blocked_response.content)
 
-        user.is_verified = True
-        user.save(update_fields=["is_verified"])
+        user.email_verified = True
+        user.save(update_fields=["email_verified"])
 
         allowed_response = self.client.post(
             "/auth/login/",

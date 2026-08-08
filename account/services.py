@@ -45,7 +45,7 @@ def send_verification_email(*, user, request=None) -> bool:
     if not getattr(user, "email", ""):
         return False
 
-    if getattr(user, "is_verified", False):
+    if getattr(user, "email_verified", False):
         return False
 
     verification_link = build_email_verification_link(user=user, request=request)

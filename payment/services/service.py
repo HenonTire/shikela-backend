@@ -364,12 +364,8 @@ class PaymentService:
             self._mark_webhook_processed(webhook_log_id, "PAYMENT_SYNC")
 
     def _process_refund_webhook(self, webhook_log_id: int, refund_id: uuid.UUID) -> None:
-        with transaction.atomic():
-            refund = (
-                Refund.objects.select_for_update()
-                .select_related("requested_by", "payment__user", "payment__order")
-                .get(pk=refund_id)
-            )
+            with transaction.atomic():
+                refund = Refund.objects.select_for_update().get(pk=refund_id)
             previous_refund_status = refund.status
             self.sync_refund_status(refund)
             refund.refresh_from_db()

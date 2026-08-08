@@ -8,12 +8,12 @@ from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView, Re
 from rest_framework.response import Response
 from rest_framework.views import APIView, PermissionDenied
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 from shop.models import Shop
-
 from .models import *
 from .serializers import *
 from .services import send_verification_email
+from rest_framework.parsers import MultiPartParser, FormParser
 
 User = get_user_model()
 
@@ -185,11 +185,11 @@ class VerifyEmailView(APIView):
         if not default_token_generator.check_token(user, token):
             return Response({"detail": "Invalid or expired verification link."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if user.is_verified:
+        if user.email_verified:
             return Response({"detail": "Email is already verified."}, status=status.HTTP_200_OK)
 
-        user.is_verified = True
-        user.save(update_fields=["is_verified", "updated_at"])
+        user.email_verified = True
+        user.save(update_fields=["email_verified", "updated_at"])
         return Response({"detail": "Email verified successfully."}, status=status.HTTP_200_OK)
 
 
@@ -202,7 +202,7 @@ class ResendVerificationEmailView(APIView):
         email = serializer.validated_data["email"]
 
         user = User.objects.filter(email__iexact=email).first()
-        if user and not user.is_verified:
+        if user and not user.email_verified:
             send_verification_email(user=user, request=request)
 
         return Response(
@@ -287,3 +287,76 @@ class NotificationSettingsMeView(RetrieveUpdateAPIView):
     def get_object(self):
         settings, _ = NotificationSettings.objects.get_or_create(user=self.request.user)
         return settings
+
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        user.set_password(serializer.validated_data['new_password'])
+        user.save(update_fields=['password', 'updated_at'])
+        return Response({"detail": "Password updated successfully."}, status=status.HTTP_200_OK)
+
+
+class LogoutAllDevicesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        tokens = OutstandingToken.objects.filter(user=request.user)
+        BlacklistedToken.objects.bulk_create(
+            [BlacklistedToken(token=t) for t in tokens
+             if not BlacklistedToken.objects.filter(token=t).exists()]
+        )
+        response = Response({"detail": "Logged out from all devices."}, status=status.HTTP_200_OK)
+        response.delete_cookie("refresh_token", path="/auth/refresh/")
+        return response
+
+
+class DeleteMyAccountView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = DeleteAccountSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie("refresh_token", path="/auth/refresh/")
+        request.user.delete()
+        return response
+
+class MyIdentityVerificationView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request):
+        iv = IdentityVerification.objects.filter(user=request.user).first()
+        if not iv:
+            return Response({"detail": "No submission yet."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(IdentityVerificationSerializer(iv).data)
+
+    def post(self, request):
+        existing = IdentityVerification.objects.filter(user=request.user).first()
+        if existing and existing.status == 'APPROVED':
+            return Response({"detail": "Your identity is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = IdentityVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if existing:
+            for field, value in serializer.validated_data.items():
+                setattr(existing, field, value)
+            existing.status = 'PENDING'
+            existing.review_notes = ''
+            existing.reviewed_at = None
+            existing.save()
+            return Response(IdentityVerificationSerializer(existing).data, status=status.HTTP_200_OK)
+
+        iv = IdentityVerification.objects.create(user=request.user, **serializer.validated_data)
+        return Response(IdentityVerificationSerializer(iv).data, status=status.HTTP_201_CREATED)
+
+    def delete(self, request):
+        IdentityVerification.objects.filter(user=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
