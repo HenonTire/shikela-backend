@@ -2,10 +2,12 @@ from django.test import TestCase
 from django.test import override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core import mail
+from django.core.cache import cache
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import ValidationError
+from rest_framework.test import APIClient
 from rest_framework.test import APIRequestFactory
 
 from account.models import PaymentMethod, User
@@ -159,3 +161,30 @@ class EmailVerificationFlowTests(TestCase):
         self.assertEqual(allowed_response.status_code, 200, allowed_response.content)
         self.assertIn("access", allowed_response.json())
 
+
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "auth-throttle-tests",
+        }
+    },
+    EMAIL_VERIFICATION_REQUIRED_FOR_LOGIN=False,
+)
+class AuthThrottleTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        User.objects.create_user(email="throttle@example.com", password="Pass123!")
+
+    def tearDown(self):
+        cache.clear()
+
+    def test_login_returns_429_after_scoped_rate_is_exceeded(self):
+        payload = {"email": "throttle@example.com", "password": "Pass123!"}
+
+        for _ in range(10):
+            self.assertEqual(self.client.post("/auth/login/", payload).status_code, 200)
+        throttled = self.client.post("/auth/login/", payload)
+
+        self.assertEqual(throttled.status_code, 429, throttled.content)

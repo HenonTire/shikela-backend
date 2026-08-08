@@ -8,6 +8,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied
 
+from core.pagination import paginated_response
+
 from account.models import User
 from order.models import OrderItem, Order
 from shop.models import Shop
@@ -188,12 +190,12 @@ class MarketerCommissionListView(APIView):
         else:
             shop = getattr(user, "owned_shop", None)
             if not shop:
-                return Response([])
+                qs = MarketerCommission.objects.none()
+                return paginated_response(self, request, qs, MarketerCommissionSerializer)
             qs = MarketerCommission.objects.filter(contract__shop=shop)
         status_filter = request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter.upper())
-        serializer = MarketerCommissionSerializer(qs.order_by("-created_at"), many=True)
-        return Response(serializer.data)
+        return paginated_response(self, request, qs.order_by("-created_at"), MarketerCommissionSerializer)
 
 # Create your views here.

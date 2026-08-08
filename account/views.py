@@ -31,6 +31,7 @@ def _refresh_cookie_kwargs():
 
 class CookieTokenObtainPairView(TokenObtainPairView):
     serializer_class = EmailVerificationTokenObtainPairSerializer
+    throttle_scope = "auth"
 
     def post(self, request, *args, **kwargs):
         response: Response = super().post(request, *args, **kwargs)
@@ -42,6 +43,8 @@ class CookieTokenObtainPairView(TokenObtainPairView):
 
 
 class CookieTokenRefreshView(TokenRefreshView):
+    throttle_scope = "auth"
+
     def post(self, request, *args, **kwargs):
         data = request.data.copy()
         if not data.get("refresh"):
@@ -65,6 +68,7 @@ class RegisterUserView(RegisterUserWithEmailVerificationMixin, ListCreateAPIView
     queryset = User.objects.all()
     permission_classes = [permissions.AllowAny]
     serializer_class = UserSerializer
+    throttle_scope = "auth"
 
 
 class UserDetailView(RetrieveUpdateDestroyAPIView):
@@ -83,18 +87,21 @@ class RegisterShopOwnerView(RegisterUserWithEmailVerificationMixin, ListCreateAP
     queryset = User.objects.filter(role='SHOP_OWNER')
     permission_classes = [permissions.AllowAny]
     serializer_class = ShopOwnerSerializer
+    throttle_scope = "auth"
 
 
 class RegisterSupplierView(RegisterUserWithEmailVerificationMixin, ListCreateAPIView):
     queryset = User.objects.filter(role='SUPPLIER')
     permission_classes = [permissions.AllowAny]
     serializer_class = SupplierSerializer
+    throttle_scope = "auth"
 
 
 class RegisterCourierView(RegisterUserWithEmailVerificationMixin, ListCreateAPIView):
     queryset = User.objects.filter(role='COURIER')
     permission_classes = [permissions.AllowAny]
     serializer_class = CourierSerializer
+    throttle_scope = "auth"
 
 
 class MyPaymentMethodsView(APIView):
@@ -169,6 +176,7 @@ class PaymentMethodView(APIView):
 
 class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     def get(self, request, *args, **kwargs):
         uid = request.query_params.get("uid")
@@ -195,6 +203,7 @@ class VerifyEmailView(APIView):
 
 class ResendVerificationEmailView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     def post(self, request, *args, **kwargs):
         serializer = ResendVerificationEmailSerializer(data=request.data)

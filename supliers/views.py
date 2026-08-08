@@ -7,6 +7,8 @@ from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIV
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.pagination import DefaultPageNumberPagination
+
 from catalog.models import Product, ProductMedia, ProductVariant
 from order.models import Order, OrderItem
 from payment.models import Earning, Payment
@@ -201,6 +203,8 @@ class SupplierLowStockAlertView(APIView):
             .select_related("product")
             .order_by("stock", "product__name")
         )
+        paginator = DefaultPageNumberPagination()
+        page = paginator.paginate_queryset(variants, request, view=self)
         alerts = [
             {
                 "variant_id": str(variant.id),
@@ -211,6 +215,6 @@ class SupplierLowStockAlertView(APIView):
                 "threshold": threshold,
                 "is_low_stock": True,
             }
-            for variant in variants
+            for variant in page
         ]
-        return Response({"count": len(alerts), "alerts": alerts})
+        return paginator.get_paginated_response(alerts)

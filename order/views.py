@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from django.db import transaction
+from core.pagination import DefaultPageNumberPagination, paginated_data_response
 from .serializers import CartItemCreateSerializer
 from .services import CartService, OrderService 
 from .models import *
@@ -57,7 +58,7 @@ class ListCartItemsView(APIView):
     def get(self, request):
         cart = Cart.objects.filter(user=request.user, is_active=True).first()
         if not cart:
-            return Response({"items": []})
+            return paginated_data_response(self, request, [])
 
         items = CartItem.objects.filter(cart=cart).select_related('product', 'variant')
         data = []
@@ -71,7 +72,7 @@ class ListCartItemsView(APIView):
                 "price": _item_unit_price(item.product, item.variant)
             })
 
-        return Response({"items": data})
+        return paginated_data_response(self, request, data)
 
 
 
@@ -200,8 +201,10 @@ class CheckoutCartView(APIView):
 class ListOrdersView(APIView):
     def get(self, request):
         orders = Order.objects.filter(user=request.user).order_by("-created_at")
+        paginator = DefaultPageNumberPagination()
+        page = paginator.paginate_queryset(orders, request, view=self)
         data = []
-        for order in orders:
+        for order in page:
             data.append({
                 "id": str(order.id),
                 "shop": order.shop.name,
@@ -218,7 +221,7 @@ class ListOrdersView(APIView):
                     } for item in order.items.select_related("product", "variant").all()
                 ]
             })
-        return Response({"orders": data})
+        return paginator.get_paginated_response(data)
 
 
 class OrderDeliveryMethodUpdateView(APIView):

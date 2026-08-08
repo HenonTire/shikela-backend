@@ -4,16 +4,15 @@ from django.db.models import Q
 from django.db import IntegrityError, transaction
 from django.http import HttpRequest, JsonResponse
 from django.utils.decorators import method_decorator
-from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, status
 from rest_framework.generics import ListAPIView
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAdminUser
 
 from analytics.services import AnalyticsService
+from core.pagination import paginated_response
 
 from .serializers import (
     EarningSerializer,
@@ -50,12 +49,6 @@ def _get_platform_merchant_id() -> str:
     if not merchant_id:
         raise PaymentServiceError("SANTIMPAY_MERCHANT_ID is required for payment")
     return merchant_id
-
-
-class PaymentPagination(PageNumberPagination):
-    page_size = 20
-    page_size_query_param = "page_size"
-    max_page_size = 100
 
 
 class DirectPaymentView(APIView):
@@ -162,8 +155,7 @@ class RefundListCreateView(APIView):
             qs = Refund.objects.select_related("payment", "requested_by").all().order_by("-created_at")
         else:
             qs = Refund.objects.select_related("payment").filter(requested_by=request.user).order_by("-created_at")
-        serializer = RefundSerializer(qs, many=True)
-        return Response(serializer.data)
+        return paginated_response(self, request, qs, RefundSerializer)
 
     def post(self, request):
         serializer = RefundRequestSerializer(data=request.data)
@@ -282,7 +274,6 @@ class EarningsDashboardView(APIView):
 class EarningsHistoryView(ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = EarningSerializer
-    pagination_class = PaymentPagination
 
     def get_queryset(self):
         queryset = (
@@ -309,7 +300,6 @@ class EarningsHistoryView(ListAPIView):
 class PayoutHistoryView(ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = PayoutRequestSerializer
-    pagination_class = PaymentPagination
 
     def get_queryset(self):
         if self.request.user.is_staff:
@@ -331,11 +321,9 @@ class PayoutHistoryView(ListAPIView):
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        history = response.data
-        if isinstance(history, dict) and "results" in history:
-            history = history["results"]
+        payload = dict(response.data)
         summary = PaymentService.get_earnings_dashboard(request.user)
-        return Response(
+        payload.update(
             {
                 **summary,
                 "total_earnings": summary["total"],
@@ -343,10 +331,10 @@ class PayoutHistoryView(ListAPIView):
                 "pending_payouts": summary["pending"],
                 "withdrawn_earnings": summary["withdrawn"],
                 "summary": summary,
-                "history": history,
-            },
-            status=response.status_code,
+                "history": payload.get("results", []),
+            }
         )
+        return Response(payload, status=response.status_code)
 
 
 
@@ -354,11 +342,14 @@ class PayoutHistoryView(ListAPIView):
 logger = logging.getLogger(__name__)
 
 @method_decorator(csrf_exempt, name="dispatch")
-class SantimPayWebhookView(View):
+class SantimPayWebhookView(APIView):
     """
     Endpoint to receive SantimPay webhook notifications.
     Handles both Payments and Refunds.
     """
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "santimpay_webhook"
 
     def get(self, request: HttpRequest):
         # Simple GET for sanity checks

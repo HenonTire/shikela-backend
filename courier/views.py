@@ -4,6 +4,8 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.pagination import paginated_response
+
 from .models import Shipment
 from .serializers import ShipmentSerializer, ShipmentStatusUpdateSerializer
 from .services import LogisticsError, update_shipment_status
@@ -24,8 +26,7 @@ class CourierShipmentListView(APIView):
             .filter(courier=request.user)
             .order_by("-updated_at")
         )
-        serializer = ShipmentSerializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return paginated_response(self, request, queryset, ShipmentSerializer, status=status.HTTP_200_OK)
 
 
 class CourierShipmentDetailView(APIView):

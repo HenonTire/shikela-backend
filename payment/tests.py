@@ -19,6 +19,12 @@ from shop.models import Shop
 
 
 @override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "payout-request-tests",
+        }
+    },
     SANTIMPAY_PRIVATE_KEY="dummy-private-key",
     SANTIMPAY_MERCHANT_ID="TEST-MERCHANT-ID",
     SANTIMPAY_TEST_BED=True,
@@ -137,6 +143,10 @@ class PayoutRequestTests(TestCase):
 
         history_resp = self.client.get("/payment/payouts/history/")
         self.assertEqual(history_resp.status_code, 200, history_resp.data)
+        self.assertEqual(history_resp.data["count"], 1)
+        self.assertIn("next", history_resp.data)
+        self.assertIn("previous", history_resp.data)
+        self.assertEqual(len(history_resp.data["results"]), 1)
         self.assertEqual(len(history_resp.data["history"]), 1)
         self.assertEqual(history_resp.data["available_earnings"], "0.00")
 

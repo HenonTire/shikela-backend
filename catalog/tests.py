@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework.test import APIRequestFactory
 
@@ -170,6 +170,14 @@ class ProductReviewAPITests(TestCase):
         self.assertEqual(data["average_rating"], 4.5)
 
 
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "ranked-products-tests",
+        }
+    }
+)
 class RankedProductListEndpointTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -233,6 +241,8 @@ class RankedProductListEndpointTests(TestCase):
 
         response = self.client.get("/catalog/products/all/")
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertGreaterEqual(len(response.data), 2)
-        self.assertEqual(response.data[0]["id"], str(high_sales.id))
-
+        self.assertEqual(response.data["count"], 2)
+        self.assertIn("next", response.data)
+        self.assertIn("previous", response.data)
+        self.assertGreaterEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["results"][0]["id"], str(high_sales.id))

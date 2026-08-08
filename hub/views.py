@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from catalog.serializers import ProductSerializer
+from core.pagination import DefaultPageNumberPagination, paginated_response
 
 from .models import Comment, Follow, Post, PostLike, Profile, TypeChoices
 from .serializers import HubCommentSerializer, HubFollowSerializer, HubPostSerializer, HubPostWriteSerializer, HubProfileSerializer
@@ -98,44 +99,51 @@ class BuyerFeedView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsBuyer]
 
     def get(self, request):
-        limit = _safe_limit(request.query_params.get("limit"), default=HubFeedService.DEFAULT_LIMIT)
+        paginator = DefaultPageNumberPagination()
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        limit = _safe_limit(request.query_params.get("limit"), default=100, max_value=100)
+        limit = max(limit, page_size)
         followed_sellers, trending_posts, new_random_posts = HubFeedService._get_bucket_sizes(limit)
         queryset = HubFeedService.build_feed_queryset(user=request.user, limit=limit)
-        payload = {
-            "limit": limit,
-            "mix": {
-                "followed_sellers_posts": followed_sellers,
-                "trending_posts": trending_posts,
-                "new_random_posts": new_random_posts,
-            },
-            "total": len(queryset),
-            "results": HubPostSerializer(queryset, many=True, context={"request": request}).data,
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        response = paginator.get_paginated_response(
+            HubPostSerializer(page, many=True, context={"request": request}).data
+        )
+        response.data["limit"] = limit
+        response.data["mix"] = {
+            "followed_sellers_posts": followed_sellers,
+            "trending_posts": trending_posts,
+            "new_random_posts": new_random_posts,
         }
-        return Response(payload)
+        return response
 
 
 class SellerFeedView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsSeller]
 
     def get(self, request):
-        limit = _safe_limit(request.query_params.get("limit"), default=SellerFeedService.DEFAULT_LIMIT)
+        paginator = DefaultPageNumberPagination()
+        page_size = paginator.get_page_size(request) or paginator.page_size
+        limit = _safe_limit(request.query_params.get("limit"), default=100, max_value=100)
+        limit = max(limit, page_size)
         targets = SellerFeedService.get_bucket_targets(limit)
         breakdown = SellerFeedService.build_feed_breakdown(user=request.user, limit=limit)
         queryset = SellerFeedService.ordered_queryset_from_ids(breakdown["ordered_product_ids"])
 
-        payload = {
-            "limit": limit,
-            "mix": targets,
-            "counts": {
-                "trending_products": len(breakdown["trending_products"]),
-                "new_products": len(breakdown["new_products"]),
-                "followed_sellers_activity": len(breakdown["followed_sellers_activity"]),
-                "random_discovery": len(breakdown["random_discovery"]),
-                "total": len(breakdown["ordered_product_ids"]),
-            },
-            "results": ProductSerializer(queryset, many=True, context={"request": request}).data,
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        response = paginator.get_paginated_response(
+            ProductSerializer(page, many=True, context={"request": request}).data
+        )
+        response.data["limit"] = limit
+        response.data["mix"] = targets
+        response.data["counts"] = {
+            "trending_products": len(breakdown["trending_products"]),
+            "new_products": len(breakdown["new_products"]),
+            "followed_sellers_activity": len(breakdown["followed_sellers_activity"]),
+            "random_discovery": len(breakdown["random_discovery"]),
+            "total": len(breakdown["ordered_product_ids"]),
         }
-        return Response(payload)
+        return response
 
 
 class SellerFeedBucketsView(APIView):
@@ -192,8 +200,7 @@ class HubPostListCreateView(APIView):
             profile = _resolve_or_create_profile(request.user)
             queryset = queryset.filter(author=profile)
 
-        serializer = HubPostSerializer(queryset, many=True, context={"request": request})
-        return Response(serializer.data)
+        return paginated_response(self, request, queryset, HubPostSerializer)
 
     def post(self, request):
         profile = _resolve_or_create_profile(request.user)
@@ -257,8 +264,7 @@ class HubPostCommentListCreateView(APIView):
     def get(self, request, pk):
         post = get_object_or_404(Post, pk=pk)
         comments = post.comments.select_related("author").order_by("-created_at")
-        serializer = HubCommentSerializer(comments, many=True, context={"request": request})
-        return Response(serializer.data)
+        return paginated_response(self, request, comments, HubCommentSerializer)
 
     def post(self, request, pk):
         post = get_object_or_404(Post, pk=pk)

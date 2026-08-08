@@ -13,6 +13,14 @@ from .selectors import (
 )
 
 
+def _safe_limit(query_value, default=12, min_value=1, max_value=100):
+    try:
+        parsed = int(query_value)
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(max_value, parsed))
+
+
 class IsShopOwner(permissions.BasePermission):
     def has_permission(self, request, view):
         return bool(
@@ -54,7 +62,7 @@ class ShopAnalyticsDashboardView(APIView):
             )
         data = get_shop_dashboard(shop)
         period = request.query_params.get("period", "daily")
-        limit = int(request.query_params.get("limit", 12))
+        limit = _safe_limit(request.query_params.get("limit"), default=12)
         data["trend"] = get_shop_trend(shop, period=period, limit=limit)
         return Response(data)
 
@@ -66,7 +74,7 @@ class SupplierAnalyticsDashboardView(APIView):
     def get(self, request):
         data = get_supplier_dashboard(request.user)
         period = request.query_params.get("period", "daily")
-        limit = int(request.query_params.get("limit", 12))
+        limit = _safe_limit(request.query_params.get("limit"), default=12)
         data["trend"] = get_supplier_trend(request.user, period=period, limit=limit)
         return Response(data)
 
@@ -78,7 +86,7 @@ class AdminAnalyticsDashboardView(APIView):
     def get(self, request):
         data = get_admin_dashboard()
         period = request.query_params.get("period", "daily")
-        limit = int(request.query_params.get("limit", 12))
+        limit = _safe_limit(request.query_params.get("limit"), default=12)
         data["trend"] = get_platform_trend(period=period, limit=limit)
         return Response(data)
 
