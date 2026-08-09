@@ -97,8 +97,23 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentMethod
         fields = ['id', 'payment_type', 'provider_name', 'account_number', 'phone_number', 'is_verified', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'payment_type', 'is_verified', 'created_at', 'updated_at']
-        
+        read_only_fields = ['id', 'is_verified', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        payment_type = attrs.get('payment_type', getattr(self.instance, 'payment_type', None))
+        if payment_type == 'BANK' and not attrs.get('account_number'):
+            raise serializers.ValidationError({"account_number": "Account number is required for bank payment methods."})
+        if payment_type in ('TELEBIRR', 'MPESA') and not attrs.get('phone_number'):
+            raise serializers.ValidationError({"phone_number": "Phone number is required for mobile payment methods."})
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = request.user
+        if getattr(user, 'role', None) != 'SHOP_OWNER':
+            raise serializers.ValidationError("Only shop owners can create payment methods.")
+        validated_data['shop_owner'] = user
+        return super().create(validated_data)
 class EmailVerificationTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
